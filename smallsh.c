@@ -15,7 +15,7 @@ int main(void) {
   errno = 0;
 /* TODO: Print an interactive input prompt */
   // Infinite loop to perform the shell functionality
-  for (;;) {
+  for (size_t i = 0; i < 5; ++i) {
     // Check for any unwaited-for background processes in the same process group ID as this program
     // Get smallsh's PGID
     // pid_t curr_pgid;
@@ -24,11 +24,24 @@ int main(void) {
     // if (errno != 0) err(errno, "Unable to get group ID for current process");
     // Get all processes with curr_pgid as PGID and print correct message for each
     // Pass 0 as PID to waitpid to request status for any child process with same process group ID as smallsh
-    int *child_proc_status = NULL;
-    pid_t child_proc_pid = waitpid(0, child_proc_status, WNOHANG);
+    // int *child_proc_status = NULL;
+    // pid_t child_proc_pid = waitpid(0, child_proc_status, WNOHANG);
     // Error check waitpid
-    if (child_proc_pid == -1) err(errno, "Unable to retrieve pid");
-    /* GO TO EXIT FOR DEBUGGING PURPOSES! REMOVE AFTER TESTING! */
+    for (size_t j = 0; j < 5; ++j) {
+      int child_proc_status;
+      pid_t child_proc_pid = waitpid(0, &child_proc_status, WNOHANG);
+      
+      // Handle error case and case where there are no background processes in smallsh's process group
+      if (child_proc_pid == -1) {
+        err(errno, "An error occurred in waitpid");
+      } else if (child_proc_pid == 0) {
+        break;
+      }
+
+      // Change this to the correct message after testing
+      fprintf(stderr, "Child process %jd has status %d", (intmax_t)child_proc_pid, child_proc_status);
+
+    }
     goto exit;
     // Print interactive input prompt for user
   }
