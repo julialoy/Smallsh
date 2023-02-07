@@ -14,14 +14,20 @@
 // Main function takes no arguments:
 // User will supply input in response to the command prompt
 int main(void) {
+  // Set some variables we will use inside the loop
+  char const *restrict env_name_1 = "USER";
+  char const *restrict env_name_2 = "LOGNAME";
+  char *line = NULL;
+  size_t n = 0;
+  int child_proc_status;
+  pid_t child_proc_pid;
   // Explicitly set errno prior to doing anything
   errno = 0;
-/* TODO: Print an interactive input prompt */
+
+  /* TODO: Print an interactive input prompt */
   // Infinite loop to perform the shell functionality
   for (size_t i = 0; i < 5; ++i) {
     // Check for any unwaited-for background processes in the same process group ID as this program
-    int child_proc_status;
-    pid_t child_proc_pid;
 
     // Loop through all child processes that have the same process group ID
     // Passing 0 to waitpid as the pid means waitpid will check all children with the current process's process group ID
@@ -37,6 +43,7 @@ int main(void) {
         if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) child_proc_pid) < 0) err(errno, "Error occurred in fprintf");
       }
     }
+
     // Checking errno taken from Linux Programming Interface wait example, chap. 26
     if (errno != ECHILD) err(errno, "Error occurred in waitpid");
     // Reset errno 
@@ -44,8 +51,6 @@ int main(void) {
     
     // Print interactive input prompt for user
     // Determine if user or root
-    char const *restrict env_name_1 = "USER";
-    char const *restrict env_name_2 = "LOGNAME";
     // char const *restrict root_name = "root";
     // char prompt = '$';
     if (strcmp(getenv(env_name_1), "root") == 0 || strcmp(getenv(env_name_2), "root") == 0) {
@@ -54,6 +59,12 @@ int main(void) {
     } else {
       if (fprintf(stderr, "$") < 0 ) err(errno, "Error occurred in fprintf");
     }
+    
+    // Loop to get input
+    // Code taken from example in smallsh assignment specs
+    ssize_t line_length = getline(&line, &n, stdin);
+    if (line_length == -1 && errno != EOF) err(errno, "Error occurred in getline");
+    if (fprintf(stderr, "Line entered was: %s", line) < 0) err(errno, "Error occurred in fprintf");
     goto exit;
   }
 
@@ -67,5 +78,6 @@ int main(void) {
 
   // Exit label for successful exiting of main function/program
 exit:
+  free(line);
   return 0;
 }
