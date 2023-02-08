@@ -98,26 +98,33 @@ int main(void) {
     // Split line into words on the given delimiters
     // Always split at least one time
     char *token = strtok(line, word_delim);
+    char *dup_token;
     // size_t token_len = strlen(token);
     // size_t num_tokens = 1; /* To be used for tracking number of pointers in word_tokens */
+   
     if (token != NULL) { 
-      ++num_tokens;
-      word_tokens = malloc(sizeof token * num_tokens); /* allocate space in tokens */
+      dup_token = strdup(token);
+      if (!dup_token) goto exit;
+      
+      word_tokens = malloc(sizeof (char **[num_tokens + 1])); /* allocate space in tokens; taken from example in Modern C */
       if (!word_tokens) goto exit; /* Error checks malloc */
     
-      word_tokens = &token;
+      word_tokens[num_tokens] = dup_token;
+      ++num_tokens;
     }
 
     for (;;) {
       token = strtok(NULL, word_delim);
       if (!token) break;
-      ++num_tokens;
-      word_tokens = realloc(word_tokens, num_tokens); /* Make sure there is enough space in word_tokens for new pointer */
+      
+      dup_token = strdup(token);
+      if (!dup_token) break;
+
+      word_tokens = realloc(word_tokens, sizeof (char **[num_tokens + 1])); /* Make sure there is enough space in word_tokens for new pointer */
       if (!word_tokens) goto exit; /* Error checks realloc? Will this lead to losing access to word_tokens if realloc fails? */
-      char *dup_token = strdup(token); /* Duplicate the token so */
-      if (!dup_token) goto exit; /* Error checks strdup */
-      *word_tokens = dup_token; /* Add pointer to new_token to word_tokens */
-      free(dup_token);
+      
+      word_tokens[num_tokens] = dup_token; /* Add pointer to new_token to word_tokens */
+      ++num_tokens;
     }
     
     if (num_tokens > 0) {
@@ -125,13 +132,7 @@ int main(void) {
         if (fprintf(stderr, "Token %zd is %s\n", i, word_tokens[i]) < 0) goto exit;
       }
    
-      // Free and reset word_tokens and reset num_tokens
-      for (size_t j = 0; j < num_tokens; ++j) {
-        free(word_tokens[j]);
-      }
     }
-    free(word_tokens);
-    num_tokens = 0;
     goto exit;
   }
 
