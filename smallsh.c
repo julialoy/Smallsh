@@ -12,13 +12,14 @@
 #include <err.h>
 
 // String search function
-// Adapted from instructor's string search function video linked in CS344's smallsh assignment specs
+// Copied from instructor's string search function video linked in CS344's smallsh assignment specs
 // Parameters: string to be searched, pattern to search for, substitution for found pattern
 char *str_gsub(char *restrict *restrict orig_str, char const *restrict pattern, char const *restrict sub) {
-  char *expanded_str = *orig_str; 
+  char *expanded_str = *orig_str;
   size_t orig_str_len = strlen(expanded_str);
   size_t const pattern_len = strlen(pattern), sub_len = strlen(sub);
-
+  
+  if (fprintf(stderr, "Searching for %s in %s, replacing with %s\n", pattern, *orig_str, sub) < 0) goto str_gsub_return;
   for (; (expanded_str = strstr(expanded_str, pattern));) {
     ptrdiff_t offset = expanded_str - *orig_str;
     if (sub_len > pattern_len) {
@@ -41,6 +42,8 @@ char *str_gsub(char *restrict *restrict orig_str, char const *restrict pattern, 
     *orig_str = expanded_str;
   }
 
+  fprintf(stderr, "Final string is %s\n", expanded_str);
+
 str_gsub_return:
   return expanded_str;
 }
@@ -58,6 +61,9 @@ int main(void) {
   char *line = NULL;
   char const *restrict ifs_var_name = "IFS";
   char **word_tokens = NULL; /* Initially set to NULL; per assignment specs, feeling fancy */
+  int last_fg_exit_status = 0; /* To hold the exit status of the last foreground process. Default is 0. */
+  char last_bg_proc_pid_char; /* To hold the PID of the most recent background process. Cast to char type for str search. Default is empty str. */
+  size_t max_len_buff = 20; /*To be used with snprintf for changing number types to strings */
   // Explicitly set errno prior to doing anything
   errno = 0;
 
@@ -82,7 +88,8 @@ int main(void) {
 
     // Checking errno taken from Linux Programming Interface wait example, chap. 26
     if (errno != ECHILD && errno != 0) goto exit;
-    // Reset errno 
+    // Reset errno; it is OK if errno was set to ECHILD
+    // ECHILD indicates there are no child processes found
     errno = 0;
     
     //1b. PS1 expansion/prompt display
@@ -151,12 +158,13 @@ int main(void) {
     // 2. Expansion
     // String search adapted from instructor's video linked in CS344's smallsh assignment specs
     // str_gsub(**string, *pattern, *sub)
+
     for (size_t i = 0; i < num_tokens; ++i) {
       char *target_pattern = NULL;
       char *substitution = NULL;
 
       // Expand ~/ instances
-      if (strcmp(&word_tokens[i][0], "~") == 0 && strcmp(&word_tokens[i][1], "/") == 0) {
+      if (word_tokens[i][0] == 126 && word_tokens[i][1] == 47) {
         target_pattern = "~/";
         substitution = getenv("HOME");
         if (!substitution) substitution = "";
@@ -164,29 +172,52 @@ int main(void) {
   
         word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
       }
+      if (errno != 0) goto exit;
       
       // Expand $$ instances
       target_pattern = "$$";
-      char proc_pid_as_char = (char) shell_pid;
-      substitution = &proc_pid_as_char;
+      fprintf(stderr, "Shell PID is %jd\n", (intmax_t) shell_pid);
+      char proc_pid_as_str[max_len_buff];
+      if (snprintf(proc_pid_as_str, max_len_buff-1, "%jd", (intmax_t) shell_pid) < 0) goto exit;
+
+      fprintf(stderr, "Shell PID as string is %s\n", proc_pid_as_str);
+      substitution = proc_pid_as_str;
       word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
+      if (errno != 0) goto exit;
 
       // Expand $? instances
       target_pattern = "$?";
-      int last_exit_status;
+      /*int last_exit_status;
       if (waitpid(shell_pid, &last_exit_status, WNOHANG) < 0) goto exit;
       if (errno != ECHILD && errno != 0) goto exit;
       if (errno == ECHILD) {
         last_exit_status = 0;
       } else {
         last_exit_status = WIFEXITED(last_exit_status);
-      }
-      char exit_status_as_char = (char) last_exit_status;
+      } */
+      char exit_status_as_str[max_len_buff];
+      if (snprintf(exit_status_as_str, max_len_buff-1, "%d", last_fg_exit_status) < 0) goto exit;
+      substitution = exit_status_as_str;
+      fprintf(stderr, "Last exit status is %s\n", substitution);
       word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
+      if (errno != 0) goto exit;
 
+      // Expande $! instances
+      target_pattern = "$!";
+      if (!last_bg_proc_pid_char) {
+        substitution = &last_bg_proc_pid_char;
+      } else {
+        substitution = "";
+      }
+      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
+      if (errno != 0) goto exit;
+    }
+    
+    // DEBUGGING/TESTING 
+    for (size_t j = 0; j < num_tokens; ++j) {
+      fprintf(stderr, "Expanded token is %s\n", word_tokens[j]);
+    }
 
-
-    } 
     goto exit;
   }
 
