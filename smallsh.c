@@ -7,9 +7,11 @@
 #include <string.h>
 #include <sys/types.h> /* For pid_t type */
 #include <sys/wait.h>
+#include <sys/stat.h>
 #include <signal.h>
 #include <errno.h>
 #include <err.h>
+#include <fcntl.h>
 
 // String search function
 // Copied from instructor's string search function video linked in CS344's smallsh assignment specs
@@ -265,7 +267,35 @@ int main(void) {
     /*for (size_t j = 0; j < num_tokens; ++j) {
       fprintf(stderr, "Expanded token is %s\n", word_tokens[j]);
     }*/
-    // 4. Parsing: TO COME
+    // 4. Parsing
+    // Remove comments
+    // size_t comment_start;
+    for (size_t j = 0; j < num_tokens; ++j) {
+      if (strcmp(word_tokens[j], "#") == 0) {
+        size_t token_count_diff = 0;
+        for (size_t n = j; n < num_tokens; ++n) {
+          free(word_tokens[n]);
+          word_tokens[n] = NULL;
+          ++token_count_diff;
+        }
+        num_tokens -= token_count_diff;
+        break;
+      }
+    }
+    
+    //char *input_file = NULL;
+    //char *output_file = NULL;
+    size_t input_offset = 0;
+    size_t output_offset = 0;
+    // Redirect 
+    for (size_t j = num_tokens; j >= 0; --j) {
+      if (strcmp(word_tokens[j], "<") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
+        input_offset = j;
+        // Do input redirection
+      } else if (strcmp(word_tokens[j], ">") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
+        output_offset = j;
+      }
+    }
 
     // 5. Execution
     // Insert NULL pointer at end here
@@ -283,7 +313,13 @@ int main(void) {
       }
       
       // MISSING: SEND ALL CHILD PROCESSES SIGINT BEFORE EXITING
-      int shell_exit_status = last_fg_exit_status;
+      int shell_exit_status;
+      if (num_tokens == 2) {
+        shell_exit_status = atoi(word_tokens[1]);
+      } else {
+        shell_exit_status = last_fg_exit_status;
+      }
+
       // No argument provided
       if (num_tokens == 1) {
         fprintf(stderr, "\nexit\n");
@@ -291,7 +327,7 @@ int main(void) {
       } else {
         // MISSING: ERROR IF ARG TO EXIT IS NOT AN INT
         fprintf(stderr, "\nexit\n");
-        shell_exit_status = atoi(word_tokens[1]);
+        // shell_exit_status = atoi(word_tokens[1]);
         exit(shell_exit_status);
       }
     } else if (strcmp(word_tokens[0], "cd") == 0) {  /* Branch for built-in command cd */
@@ -320,6 +356,13 @@ int main(void) {
           break;
         case 0: /* Process is child */
           // MISSING: Handling output redirection operator and input redirection opperator
+          
+          if (input_offset != 0) {
+            if (open(word_tokens[input_offset]) == -1) {
+              if (fprintf(stderr, "An error occurred while trying to open %s for reading on stdin\n", word_tokens[input_offset]) < 0) goto exit;
+              goto exit;
+            }
+          }
           if (execvp(word_tokens[0], word_tokens) == -1) {
             if (fprintf(stderr, "An error occurred while trying to run command %s\n", word_tokens[0]) < 0) goto exit;
             goto exit;
