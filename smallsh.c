@@ -19,16 +19,18 @@ char *str_gsub(char *restrict *restrict orig_str, char const *restrict pattern, 
   size_t orig_str_len = strlen(expanded_str);
   size_t const pattern_len = strlen(pattern), sub_len = strlen(sub);
   
- //  if (fprintf(stderr, "Searching for %s in %s, replacing with %s\n", pattern, *orig_str, sub) < 0) goto str_gsub_return;
-  for (; (expanded_str = strstr(expanded_str, pattern));) {
+  // if (fprintf(stderr, "Searching for %s in %s, replacing with %s\n", pattern, *orig_str, sub) < 0) goto str_gsub_return;
+  for (;(expanded_str = strstr(expanded_str, pattern));) {
+    // fprintf(stderr, "Pattern (%s) found (%s)\n", pattern, expanded_str);
     ptrdiff_t offset = expanded_str - *orig_str;
     if (sub_len > pattern_len) {
+      // fprintf(stderr, "Realloc expanded str to %zu + %zu - %zu + 1\n", orig_str_len, sub_len, pattern_len);
       expanded_str = realloc(*orig_str, sizeof **orig_str * (orig_str_len + sub_len - pattern_len + 1));
       if (!expanded_str) goto str_gsub_return;
       *orig_str = expanded_str;
       expanded_str = *orig_str + offset;
     }
-
+    
     memmove(expanded_str + sub_len, expanded_str + pattern_len, orig_str_len + 1 - offset - pattern_len);
     memcpy(expanded_str, sub, sub_len);
     orig_str_len = orig_str_len + sub_len - pattern_len;
@@ -37,6 +39,7 @@ char *str_gsub(char *restrict *restrict orig_str, char const *restrict pattern, 
 
   expanded_str = *orig_str;
   if (sub_len < pattern_len) {
+    // fprintf(stderr, "Realloc expanded str to %zu +1\n", orig_str_len);
     expanded_str = realloc(*orig_str, sizeof **orig_str * (orig_str_len + 1));
     if (!expanded_str) {
       expanded_str = *orig_str;
@@ -51,6 +54,21 @@ str_gsub_return:
   return expanded_str;
 }
 
+/*int manage_bg_procs(pid_t group_pid, int &target_proc_status) {
+  while ((target_proc_pid = waitpid(group_pid, &target_proc_status, WUNTRACED | WNOHANG | WCONTINUED) > 0)) {
+    if (WIFEXITED(target_proc_status)) {
+      if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) target_proc_status, WEXITSTATUS(target_proc_status)) < 0) goto exit_manage_bg_procs;
+    } else if (WIFSIGNALED(target_proc_status)) {
+      if (fprintf(stder, "Child process %jd done. Signaled %d.\n", (intmax_t) target_proc_status, WTERMSIG(target_proc_status)) < 0) goto exit_manage_bg_procs;
+    } else if (WIFSTOPPED(target_proc_status)) {
+      if (kill(target_proc_pid, SIGCONT) == -1) goto exit_manage_bg_procs;
+      if (fprintf(stderr, "Child process %jd stopped. Continuing.\n," (intmax_t) target_proc_pid) < 0) goto exit_manage_bg_procs;
+    }
+  }
+
+exit_manage_bg_procs:
+  return errno ? -1 : 0;
+}*/
 
 // Main function takes no arguments:
 // User will supply input in response to the command prompt
@@ -60,6 +78,7 @@ int main(void) {
   int child_proc_status;
   pid_t shell_pid = getpid();
   pid_t child_proc_pid;
+  pid_t group_pid = 0; /* For use in waitpid to get the process group for all children with calling process's process group ID */
   
   char *line = NULL;
   char const *restrict ifs_var_name = "IFS";
@@ -69,6 +88,7 @@ int main(void) {
   size_t max_len_buff = 20; /*To be used with snprintf for changing number types to strings */
   // Explicitly set errno prior to doing anything
   errno = 0;
+  //int main_errno = errno; /* For saving errno status of main function when needed */
 
   // Infinite loop to perform the shell functionality
   for (;;) {
@@ -77,7 +97,7 @@ int main(void) {
     // Loop through all child processes that have the same process group ID
     // Passing 0 to waitpid as the pid means waitpid will check all children with the current process's process group ID
     // Print correct info message to stderr for all child processes found
-    while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
+    while ((child_proc_pid = waitpid(group_pid, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
       // Use of macros comes from CS344 modules and Linux Programming Interface text
       if (WIFEXITED(child_proc_status)) {
         if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
@@ -89,6 +109,7 @@ int main(void) {
       }
     }
 
+    //if (manage_bg_procs(group_pid, &child_proc_status) < 0 && errno != ECHILD) goto exit;
     // Checking errno taken from Linux Programming Interface wait example, chap. 26
     if (errno != ECHILD && errno != 0) goto exit;
     // Reset errno; it is OK if errno was set to ECHILD
@@ -113,10 +134,13 @@ int main(void) {
     // Clear EOF and error indicators for stdin
     if (feof(stdin) != 0) {
       // Per man pages this function should not fail
-      //if (fprintf(stderr, "Clearing EOF and errors") < 0) goto exit;*/ /* DEBUGGING */ 
+      // if (fprintf(stderr, "Clearing EOF and errors. Error is %d. EOF is %d", errno, feof(stdin)) < 0) goto exit; /* DEBUGGING */ 
       clearerr(stdin);
+      // fprintf(stderr, "Memset line\n");
+      memset(line, 0, line_length);
       line = "exit $?";
       line_length = strlen(line);
+      // fprintf(stderr, "New line is %s\n", line);
     }
     // Reset errno in case EOF was encountered when reading from stdin
     errno = 0;
@@ -161,9 +185,13 @@ int main(void) {
     }
 
     // Explicitly add NULL pointer to end of word_tokens to allow for use as arg to execvp later in shell program
-    word_tokens = realloc(word_tokens, sizeof (char **[num_tokens+1]));
-    word_tokens[num_tokens+1] = NULL;
-   
+   /* word_tokens = realloc(word_tokens, sizeof (char **[num_tokens+1]));
+    word_tokens[num_tokens+1] = NULL; */
+    
+    // DEBUGGING
+    /* for (size_t y = 0; y < num_tokens+1; y++) {
+      fprintf(stderr, "Token %zd is %s\n", y, word_tokens[y]);
+    }*/
     // 2. Expansion
     // String search adapted from instructor's video linked in CS344's smallsh assignment specs
     // str_gsub(**string, *pattern, *sub)
@@ -240,7 +268,9 @@ int main(void) {
     // 4. Parsing: TO COME
 
     // 5. Execution
-    
+    // Insert NULL pointer at end here
+    word_tokens = realloc(word_tokens, sizeof (char**[num_tokens+1]));
+    word_tokens[num_tokens+1] = NULL;
     // Branch for no command word entered in stdin
 
     // Branch for built-in command exit
@@ -264,7 +294,7 @@ int main(void) {
         shell_exit_status = atoi(word_tokens[1]);
         exit(shell_exit_status);
       }
-    } else if (strcmp(word_tokens[0], "cd") == 0) { /* Branch for built-in command cd */
+    } else if (strcmp(word_tokens[0], "cd") == 0) {  /* Branch for built-in command cd */
       if (num_tokens > 2) {
         errno = -1;
         fprintf(stderr, "Too many arguments passed to cd command");
@@ -313,11 +343,16 @@ int main(void) {
     }
    // goto exit;
    // Free things!
-   free(line);
-   for (size_t x = 0; x < num_tokens; ++x) {
+   // fprintf(stderr, "Memset line\n");
+   //free(line);
+   memset(line, 0, line_length);
+   /*for (size_t x = 0; x < num_tokens; ++x) {
      free(word_tokens[x]);
    }
-   free(word_tokens);
+   free(word_tokens);*/
+   // fprintf(stderr, "Memset word_tokens\n");
+   memset(word_tokens, 0, num_tokens+1);
+   // fprintf(stderr, "Reset num_tokens to 0\n");
    num_tokens = 0;
   }
 
@@ -333,7 +368,8 @@ int main(void) {
   // Based on CS344 tree assignment skeleton code
 exit:
   // Free line pointer used for input
-  if (errno != 0) {
+  if (errno == 0) {
+    // fprintf(stderr, "Freeing line and word_tokens if they ae not null\n");
     if (line != NULL) free(line);
     if (num_tokens > 0 && word_tokens != NULL) {
       for (size_t x = 0; x < num_tokens; ++x) {
