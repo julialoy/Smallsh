@@ -12,6 +12,8 @@
 #include <errno.h>
 #include <err.h>
 #include <fcntl.h>
+#include <stdbool.h>
+#include <ctype.h>
 
 // String search function
 // Copied from instructor's string search function video linked in CS344's smallsh assignment specs
@@ -285,16 +287,42 @@ int main(void) {
     
     //char *input_file = NULL;
     //char *output_file = NULL;
-    size_t input_offset = 0;
-    size_t output_offset = 0;
-    // Redirect 
-    for (size_t j = num_tokens; j >= 0; --j) {
-      if (strcmp(word_tokens[j], "<") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
-        input_offset = j;
+    size_t input_ptr_offset = 0;
+    size_t output_ptr_offset = 0;
+    int is_bg_proc = false;
+    // Determines whether the command should be run in background and whether stdin/stdout will be redirected 
+    for (size_t j = num_tokens-1; j >= 0; --j) {
+      if (strcmp(word_tokens[j], "&") == 0 && j == num_tokens) {
+        is_bg_proc = true;
+      } else if (strcmp(word_tokens[j], "<") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
+        input_ptr_offset = j;
         // Do input redirection
       } else if (strcmp(word_tokens[j], ">") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
-        output_offset = j;
+        output_ptr_offset = j;
       }
+    }
+    
+    // If & was passed as last word, remove it from the word_tokens array and adjust the number of tokens
+    if (is_bg_proc == true) {
+      word_tokens[num_tokens] = NULL;
+      --num_tokens;
+    }
+    
+    char *input_file = NULL;
+    char *output_file = NULL;
+    // If input/output will be redirected, save that info and remove it from the word_tokens array along with the redirect operator
+    if (input_ptr_offset != 0) {
+      input_file = word_tokens[input_ptr_offset+1];
+      word_tokens[input_ptr_offset+1] = NULL;
+      word_tokens[input_ptr_offset] = NULL;
+      num_tokens -= 2;
+    }
+
+    if (output_ptr_offset != 0) {
+      output_file = word_tokens[output_ptr_offset+1];
+      word_tokens[output_ptr_offset+1] = NULL;
+      word_tokens[output_ptr_offset] = NULL;
+      num_tokens -= 2;
     }
 
     // 5. Execution
@@ -313,15 +341,17 @@ int main(void) {
       }
       
       // MISSING: SEND ALL CHILD PROCESSES SIGINT BEFORE EXITING
-      int shell_exit_status;
+      int shell_exit_status = last_fg_exit_status;
       if (num_tokens == 2) {
+        size_t arg_len = strlen(word_tokens[1]);
+        for (size_t c = 0; c < arg_len; ++c) {
+          if (isdigit(word_tokens[1][c]) != 0) {
+            fprintf(stderr, "Invalid arg to exit");
+            goto exit;
+          }
+        }
         shell_exit_status = atoi(word_tokens[1]);
-      } else {
-        shell_exit_status = last_fg_exit_status;
-      }
-
-      // No argument provided
-      if (num_tokens == 1) {
+      } else if (num_tokens == 1) {
         fprintf(stderr, "\nexit\n");
         exit(shell_exit_status);
       } else {
@@ -356,13 +386,47 @@ int main(void) {
           break;
         case 0: /* Process is child */
           // MISSING: Handling output redirection operator and input redirection opperator
-          
-          if (input_offset != 0) {
-            if (open(word_tokens[input_offset]) == -1) {
-              if (fprintf(stderr, "An error occurred while trying to open %s for reading on stdin\n", word_tokens[input_offset]) < 0) goto exit;
+          /* Redirection handling adapted from Linux Programming Interface section 27.4 example code */
+          if (input_file) {
+            //char *input_mode = "r";
+            //if (!freopen(input_file, input_mode, stdin)) {
+              //fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file); /* No error check since the next line will exit with error anyway */
+              //goto exit;
+            //}
+            int in_fd;
+            in_fd = open(input_file, O_RDONLY);
+            if (in_fd == -1) {
+              fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
               goto exit;
             }
+
+            if (in_fd != STDIN_FILENO) {
+              if (dup2(in_fd, STDIN_FILENO) == -1) {
+                fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
+                goto exit;
+              }
+              close(in_fd);
+            }
           }
+
+          if (output_file) {
+            int out_fd;
+            out_fd = open(output_file, O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
+            if (out_fd == -1) {
+              fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file);
+              goto exit;
+            }
+
+            if (out_fd != STDOUT_FILENO) {
+              if (dup2(out_fd, STDOUT_FILENO) == -1) {
+                fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file);
+                goto exit;
+              }
+              close(out_fd);
+            }
+          }
+          
+          // Execute new command
           if (execvp(word_tokens[0], word_tokens) == -1) {
             if (fprintf(stderr, "An error occurred while trying to run command %s\n", word_tokens[0]) < 0) goto exit;
             goto exit;
@@ -370,16 +434,32 @@ int main(void) {
           }
           break;
         default: /* Process is parent */
-          if (waitpid(new_child_pid, &new_child_status, 0) == -1) goto exit; /* Blocking wait for child process with error checking */
-          if (WIFSIGNALED(new_child_status)) {
-            last_fg_exit_status = 128 + WTERMSIG(new_child_status);
-          } else if (WIFSTOPPED(new_child_status)) {
-            if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) new_child_pid) < 0) goto exit;
-            kill(new_child_pid, SIGCONT);
+          // Perform blocking wait if process is not run in background
+          if (!is_bg_proc) {
+            if (waitpid(new_child_pid, &new_child_status, 0) == -1) goto exit; /* Blocking wait for child process with error checking */
+            // Set shell variable $?      
+            if (WIFSIGNALED(last_fg_exit_status)) {
+              last_fg_exit_status = 128 + WTERMSIG(new_child_status);
+            } else if (WIFSTOPPED(new_child_status)) {
+              if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) new_child_pid) < 0) goto exit;
+              if (kill(new_child_pid, SIGCONT) == -1) goto exit;
+              last_bg_proc_pid = new_child_pid;
+            } else {
+              last_fg_exit_status = new_child_status;
+            }
+          } else { /* Do not wait for background process */
             last_bg_proc_pid = new_child_pid;
-          } else if (WIFEXITED(new_child_status)) {
-            last_fg_exit_status = new_child_status; /* Set shell variable $? to exit status of this command */
           }
+
+          //if (WIFSIGNALED(new_child_status)) {
+          //  last_fg_exit_status = 128 + WTERMSIG(new_child_status);
+          //} else if (WIFSTOPPED(new_child_status)) {
+          //  if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) new_child_pid) < 0) goto exit;
+          //  kill(new_child_pid, SIGCONT);
+          //  last_bg_proc_pid = new_child_pid;
+          //} else if (WIFEXITED(new_child_status)) {
+          //  last_fg_exit_status = new_child_status; /* Set shell variable $? to exit status of this command */
+          //}
           break;
       }
 
