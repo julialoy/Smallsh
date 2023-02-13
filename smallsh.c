@@ -101,6 +101,7 @@ int main(void) {
     // Loop through all child processes that have the same process group ID
     // Passing 0 to waitpid as the pid means waitpid will check all children with the current process's process group ID
     // Print correct info message to stderr for all child processes found
+    fprintf(stderr, "Wait for bg processes\n");
     while ((child_proc_pid = waitpid(group_pid, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
       // Use of macros comes from CS344 modules and Linux Programming Interface text
       if (WIFEXITED(child_proc_status)) {
@@ -112,7 +113,7 @@ int main(void) {
         if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) child_proc_pid) < 0) goto exit;
       }
     }
-
+    fprintf(stderr, "Finished with bg processes\n");
     //if (manage_bg_procs(group_pid, &child_proc_status) < 0 && errno != ECHILD) goto exit;
     // Checking errno taken from Linux Programming Interface wait example, chap. 26
     if (errno != ECHILD && errno != 0) goto exit;
@@ -291,20 +292,20 @@ int main(void) {
     size_t output_ptr_offset = 0;
     int is_bg_proc = false;
     // Determines whether the command should be run in background and whether stdin/stdout will be redirected 
-    for (size_t j = num_tokens-1; j >= 0; --j) {
-      if (strcmp(word_tokens[j], "&") == 0 && j == num_tokens) {
+    for (size_t j = num_tokens-1; j > 0; --j) {
+      if (num_tokens > 1 && strcmp(word_tokens[j], "&") == 0 && j == (num_tokens-1)) {
         is_bg_proc = true;
-      } else if (strcmp(word_tokens[j], "<") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
+      } else if (num_tokens > 2 && strcmp(word_tokens[j], "<") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 3) || j == (num_tokens - 5))) {
         input_ptr_offset = j;
         // Do input redirection
-      } else if (strcmp(word_tokens[j], ">") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
+      } else if (num_tokens > 2 && strcmp(word_tokens[j], ">") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 3) || j == (num_tokens - 5))) {
         output_ptr_offset = j;
       }
     }
     
     // If & was passed as last word, remove it from the word_tokens array and adjust the number of tokens
     if (is_bg_proc == true) {
-      word_tokens[num_tokens] = NULL;
+      word_tokens[num_tokens-1] = NULL;
       --num_tokens;
     }
     
@@ -405,7 +406,9 @@ int main(void) {
                 fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
                 goto exit;
               }
-              close(in_fd);
+              if (in_fd != 0) {
+                close(in_fd);
+              }
             }
           }
 
@@ -422,7 +425,9 @@ int main(void) {
                 fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file);
                 goto exit;
               }
-              close(out_fd);
+              if (out_fd != 1) {
+                close(out_fd);
+              }
             }
           }
           
@@ -432,10 +437,17 @@ int main(void) {
             goto exit;
             // break;
           }
+          fflush(stdin);
+          fflush(stdout);
+          fflush(stderr);
           break;
         default: /* Process is parent */
           // Perform blocking wait if process is not run in background
+          fflush(stdin);
+          fflush(stdout);
+          fflush(stderr);
           if (!is_bg_proc) {
+            fprintf(stderr, "Running child process in foreground\n");
             if (waitpid(new_child_pid, &new_child_status, 0) == -1) goto exit; /* Blocking wait for child process with error checking */
             // Set shell variable $?      
             if (WIFSIGNALED(last_fg_exit_status)) {
