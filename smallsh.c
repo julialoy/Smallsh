@@ -210,20 +210,27 @@ int main(void) {
         target_pattern = "~/";
         temp_sub = getenv("HOME");
         // fprintf(stderr, "HOME env is %s\n", temp_sub);
+
         if (!temp_sub) {
+          // substitution = malloc(sizeof (char *));
           substitution = "";
         } else {
+          // size_t temp_sub_len = strlen(temp_sub);
+          // substitution = malloc(sizeof (char *) * temp_sub_len);
           substitution = strdup(temp_sub);
         }
         substitution = strcat(substitution, "/");
   
         word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
-      }
-      size_t sub_len = strlen(substitution);
-      memset(substitution, '\0', sub_len);
-      fprintf(stderr, "%s\n", substitution);
-      if (errno != 0) goto exit;
       
+        size_t sub_len = strlen(substitution);
+        memset(substitution, '\0', sub_len);
+        // fprintf(stderr, "%s\n", substitution);
+        // free(substitution);
+        substitution = NULL;
+        if (errno != 0) goto exit;
+      }
+     // substitution = NULL;
       // Expand $$ instances
       target_pattern = "$$";
 //      fprintf(stderr, "Shell PID is %jd\n", (intmax_t) shell_pid);
@@ -272,7 +279,7 @@ int main(void) {
       }
       word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
       if (errno != 0) goto exit;
-      free(substitution);
+      // free(substitution);
     }
     
     // DEBUGGING/TESTING 
@@ -361,6 +368,7 @@ int main(void) {
           }
         }*/
         shell_exit_status = atoi(word_tokens[1]);
+        last_fg_exit_status = shell_exit_status;
         fprintf(stderr, "\nexit\n");
         // fprintf(stderr, "Exit status is %d\n", shell_exit_status);
         exit(shell_exit_status);
