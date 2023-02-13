@@ -101,8 +101,8 @@ int main(void) {
     // Loop through all child processes that have the same process group ID
     // Passing 0 to waitpid as the pid means waitpid will check all children with the current process's process group ID
     // Print correct info message to stderr for all child processes found
-    fprintf(stderr, "Wait for bg processes\n");
-    while ((child_proc_pid = waitpid(group_pid, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
+    // fprintf(stderr, "Wait for bg processes\n");
+    /*while ((child_proc_pid = waitpid(group_pid, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
       // Use of macros comes from CS344 modules and Linux Programming Interface text
       if (WIFEXITED(child_proc_status)) {
         if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
@@ -112,8 +112,8 @@ int main(void) {
         if (kill(child_proc_pid, SIGCONT) == -1) err(errno, "Unable to send signal");
         if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) child_proc_pid) < 0) goto exit;
       }
-    }
-    fprintf(stderr, "Finished with bg processes\n");
+    }*/
+    // fprintf(stderr, "Finished with bg processes\n");
     //if (manage_bg_procs(group_pid, &child_proc_status) < 0 && errno != ECHILD) goto exit;
     // Checking errno taken from Linux Programming Interface wait example, chap. 26
     if (errno != ECHILD && errno != 0) goto exit;
@@ -337,23 +337,27 @@ int main(void) {
     if (strcmp(word_tokens[0], "exit") == 0) {
       if (num_tokens > 2) {
         errno = -1;
-        fprintf(stderr, "Too many arguments passed to exit command");
+        fprintf(stderr, "Too many arguments passed to exit command\n");
         goto exit;
       }
       
       // MISSING: SEND ALL CHILD PROCESSES SIGINT BEFORE EXITING
       int shell_exit_status = last_fg_exit_status;
       if (num_tokens == 2) {
-        size_t arg_len = strlen(word_tokens[1]);
+        /*size_t arg_len = strlen(word_tokens[1]);
         for (size_t c = 0; c < arg_len; ++c) {
           if (isdigit(word_tokens[1][c]) != 0) {
             fprintf(stderr, "Invalid arg to exit");
             goto exit;
           }
-        }
+        }*/
         shell_exit_status = atoi(word_tokens[1]);
+        fprintf(stderr, "\nexit\n");
+        // fprintf(stderr, "Exit status is %d\n", shell_exit_status);
+        exit(shell_exit_status);
       } else if (num_tokens == 1) {
         fprintf(stderr, "\nexit\n");
+        // fprintf(stderr, "Exit status is %d\n", shell_exit_status);
         exit(shell_exit_status);
       } else {
         // MISSING: ERROR IF ARG TO EXIT IS NOT AN INT
@@ -364,15 +368,22 @@ int main(void) {
     } else if (strcmp(word_tokens[0], "cd") == 0) {  /* Branch for built-in command cd */
       if (num_tokens > 2) {
         errno = -1;
-        fprintf(stderr, "Too many arguments passed to cd command");
+        fprintf(stderr, "Too many arguments passed to cd command\n");
         goto exit;
+        // continue;
+        //goto reset;
       }
 
       char *cd_arg = getenv("HOME");
       if (num_tokens == 2) {
         cd_arg = word_tokens[1];
       }
-      if (chdir(cd_arg) != 0) goto exit;
+      if (chdir(cd_arg) != 0) {
+        fprintf(stderr, "Unable to change directory\n");
+        // continue;
+        //goto reset;
+        goto exit;
+      }
 
     } else { /* Branch for non-built-in commands */
       // Execute non-built-in-command in a new child process
@@ -383,12 +394,14 @@ int main(void) {
 
       switch(new_child_pid) {
         case -1:
+          fprintf(stderr, "An error occurred in fork()\n");
           goto exit; /* Error checks fork */
           break;
         case 0: /* Process is child */
           // MISSING: Handling output redirection operator and input redirection opperator
           /* Redirection handling adapted from Linux Programming Interface section 27.4 example code */
           if (input_file) {
+            // fprintf(stderr, "Redirect input\n");
             //char *input_mode = "r";
             //if (!freopen(input_file, input_mode, stdin)) {
               //fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file); /* No error check since the next line will exit with error anyway */
@@ -397,14 +410,15 @@ int main(void) {
             int in_fd;
             in_fd = open(input_file, O_RDONLY);
             if (in_fd == -1) {
-              fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
-              goto exit;
+             fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
+              break;
             }
 
             if (in_fd != STDIN_FILENO) {
               if (dup2(in_fd, STDIN_FILENO) == -1) {
-                fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
-                goto exit;
+               fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
+               goto exit;
+               break;
               }
               if (in_fd != 0) {
                 close(in_fd);
@@ -413,17 +427,20 @@ int main(void) {
           }
 
           if (output_file) {
+           // fprintf(stderr, "Redirect output\n");
             int out_fd;
             out_fd = open(output_file, O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
             if (out_fd == -1) {
               fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file);
               goto exit;
+              break;
             }
 
             if (out_fd != STDOUT_FILENO) {
               if (dup2(out_fd, STDOUT_FILENO) == -1) {
                 fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file);
                 goto exit;
+                break;
               }
               if (out_fd != 1) {
                 close(out_fd);
@@ -435,7 +452,7 @@ int main(void) {
           if (execvp(word_tokens[0], word_tokens) == -1) {
             if (fprintf(stderr, "An error occurred while trying to run command %s\n", word_tokens[0]) < 0) goto exit;
             goto exit;
-            // break;
+            break;
           }
           fflush(stdin);
           fflush(stdout);
@@ -447,19 +464,25 @@ int main(void) {
           fflush(stdout);
           fflush(stderr);
           if (!is_bg_proc) {
-            fprintf(stderr, "Running child process in foreground\n");
+            // fprintf(stderr, "Running child process in foreground\n");
             if (waitpid(new_child_pid, &new_child_status, 0) == -1) goto exit; /* Blocking wait for child process with error checking */
             // Set shell variable $?      
             if (WIFSIGNALED(last_fg_exit_status)) {
               last_fg_exit_status = 128 + WTERMSIG(new_child_status);
             } else if (WIFSTOPPED(new_child_status)) {
               if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) new_child_pid) < 0) goto exit;
-              if (kill(new_child_pid, SIGCONT) == -1) goto exit;
+              if (kill(new_child_pid, SIGCONT) == -1) {
+                fprintf(stderr, "Unable to send SICONT to child %jd\n", (intmax_t) new_child_pid);
+                break;
+                //goto exit;
+              }
               last_bg_proc_pid = new_child_pid;
             } else {
               last_fg_exit_status = new_child_status;
             }
+            // fprintf(stderr, "For foreground child %jd exit status is %d\n", (intmax_t) new_child_pid, last_fg_exit_status);
           } else { /* Do not wait for background process */
+            //fprintf(stderr, "Not waiting for process\n");
             last_bg_proc_pid = new_child_pid;
           }
 
@@ -476,10 +499,22 @@ int main(void) {
       }
 
     }
+    while ((child_proc_pid = waitpid(group_pid, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
+      // Use of macros comes from CS344 modules and Linux Programming Interface text
+      if (WIFEXITED(child_proc_status)) {
+        if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
+      } else if (WIFSIGNALED(child_proc_status)) {
+        if (fprintf(stderr, "Child process %jd done. Signaled %d.\n", (intmax_t) child_proc_pid, WTERMSIG(child_proc_status)) < 0) goto exit;
+      } else if (WIFSTOPPED(child_proc_status)) {
+        if (kill(child_proc_pid, SIGCONT) == -1) err(errno, "Unable to send signal");
+        if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) child_proc_pid) < 0) goto exit;
+      }
+    }
    // goto exit;
    // Free things!
    // fprintf(stderr, "Memset line\n");
    //free(line);
+// reset:
    memset(line, 0, line_length);
    /*for (size_t x = 0; x < num_tokens; ++x) {
      free(word_tokens[x]);
