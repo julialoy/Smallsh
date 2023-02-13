@@ -204,16 +204,24 @@ int main(void) {
     for (size_t i = 0; i < num_tokens; ++i) {
       char *target_pattern = NULL;
       char *substitution = NULL;
-
+      char *temp_sub = NULL;
       // Expand ~/ instances
       if (word_tokens[i][0] == 126 && word_tokens[i][1] == 47) {
         target_pattern = "~/";
-        substitution = getenv("HOME");
-        if (!substitution) substitution = "";
+        temp_sub = getenv("HOME");
+        // fprintf(stderr, "HOME env is %s\n", temp_sub);
+        if (!temp_sub) {
+          substitution = "";
+        } else {
+          substitution = strdup(temp_sub);
+        }
         substitution = strcat(substitution, "/");
   
         word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
       }
+      size_t sub_len = strlen(substitution);
+      memset(substitution, '\0', sub_len);
+      fprintf(stderr, "%s\n", substitution);
       if (errno != 0) goto exit;
       
       // Expand $$ instances
@@ -264,6 +272,7 @@ int main(void) {
       }
       word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
       if (errno != 0) goto exit;
+      free(substitution);
     }
     
     // DEBUGGING/TESTING 
