@@ -96,7 +96,7 @@ int main(void) {
     int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
     
     // 1a. Manage background processes: Check for any unwaited-for background processes in the same process group ID as smallsh
-    while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG)) > 0) {
+    while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
       // Use of macros based on CS344 modules and Linux Programming Interface text
       if (WIFEXITED(child_proc_status)) {
         if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
@@ -403,7 +403,7 @@ int main(void) {
           if (output_file) {
            // fprintf(stderr, "Redirect output\n");
             int out_fd;
-            out_fd = open(output_file, O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
+            out_fd = open(output_file, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
             if (out_fd == -1) {
               fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file);
               goto exit;
