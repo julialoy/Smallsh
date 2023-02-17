@@ -92,11 +92,11 @@ int main(void) {
   for (;;) {
     // Variables for managing background processes
     // Do not need to persist on subsequent loop iterations
-    pid_t child_proc_pid = 0; /* To hold pid of unwaited-for background process */
-    int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
+    // pid_t child_proc_pid = 0; /* To hold pid of unwaited-for background process */
+    // int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
     
     // 1a. Manage background processes: Check for any unwaited-for background processes in the same process group ID as smallsh
-    while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
+    /* while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
       // Use of macros based on CS344 modules and Linux Programming Interface text
       if (WIFEXITED(child_proc_status)) {
         if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
@@ -112,7 +112,7 @@ int main(void) {
     // ECHILD indicates there were no unwaited for processes
     if (errno != ECHILD && errno != 0) goto exit;
     // Reset errno to remove ECHILD error if it exists
-    errno = 0;
+    errno = 0;*/
     
     //1b. PS1 expansion/prompt display
     char *prompt = NULL; /* Prompt should not persist through loop iterations. Retrieve on each iteration. */
@@ -149,7 +149,7 @@ int main(void) {
     char *word_delim = NULL; /* Delimiter should not persist through loop iterations. */
     char *temp_delim = getenv(ifs_str); /* Avoid accidentally overwriting IFS value. */
     if (!temp_delim) {
-      word_delim = " \t\n"; /* Set delimiter to default of IFS is null */
+      word_delim = "\t\n"; /* Set delimiter to default of IFS is null */
     } else {
       word_delim = temp_delim;
     }
@@ -320,15 +320,26 @@ int main(void) {
       // MISSING: SEND ALL CHILD PROCESSES SIGINT BEFORE EXITING
       int shell_exit_status = last_fg_exit_status;
       if (num_tokens == 2) {
-        /*size_t arg_len = strlen(word_tokens[1]);
-        for (size_t c = 0; c < arg_len; ++c) {
+        char *exit_status_str = NULL;
+        size_t arg_len = strlen(word_tokens[1]);
+        exit_status_str = malloc(sizeof (size_t) * arg_len);
+        for (size_t c = 0; c < arg_len; c++) {
           if (isdigit(word_tokens[1][c]) != 0) {
-            fprintf(stderr, "Invalid arg to exit");
+            exit_status_str[c] = word_tokens[1][c];
+          } else {
+            fprintf(stderr, "Exit status arg contains non-digits: %s\n", word_tokens[1]); /* No error checking since exit immediately */
+            free(exit_status_str);
             goto exit;
           }
-        }*/
-        shell_exit_status = atoi(word_tokens[1]);
+        }
+
+        shell_exit_status = atoi(exit_status_str);
+        if (shell_exit_status < 0) {
+          errno = -1;
+          goto exit;
+        }
         last_fg_exit_status = shell_exit_status;
+        free(exit_status_str);
         fprintf(stderr, "\nexit\n");
         // fprintf(stderr, "Exit status is %d\n", shell_exit_status);
         exit(shell_exit_status);
@@ -435,9 +446,18 @@ int main(void) {
           fflush(stdout);
           fflush(stderr);
           if (!is_bg_proc) {
-            if (waitpid(new_child_pid, &new_child_status, 0) == -1) goto exit; /* Blocking wait for child process with error checking */
-            // Set shell variable $?      
-            if (WIFSIGNALED(last_fg_exit_status)) {
+            // fprintf(stderr, "Wait for child process %jd\n", (intmax_t) new_child_pid);
+            pid_t waitpid_return_val = waitpid(new_child_pid, &new_child_status, 0);
+            if (waitpid_return_val == -1) goto exit;
+            // if (waitpid(new_child_pid, &new_child_status, 0) == -1) goto exit; /* Blocking wait for child process with error checking */
+            // Set shell variable $?
+            //if (!new_child_status) {
+              //fprintf(stderr, "An error occurred in waitpid. Child %jd status is %d\n", (intmax_t) waitpid_return_val, new_child_status);
+              //goto exit;
+            //}
+
+            // last_fg_exit_status = new_child_status;
+            if (WIFSIGNALED(new_child_status)) {
               last_fg_exit_status = 128 + WTERMSIG(new_child_status);
             } else if (WIFSTOPPED(new_child_status)) {
               if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) new_child_pid) < 0) goto exit;
@@ -446,8 +466,8 @@ int main(void) {
                 goto exit;
               }
               last_bg_proc_pid = new_child_pid;
-            } else {
-              last_fg_exit_status = new_child_status;
+            } else if (WIFEXITED(new_child_status)) {
+              last_fg_exit_status = WEXITSTATUS(new_child_status);
             }
           } else { /* Do not wait for background process */
             last_bg_proc_pid = new_child_pid;
@@ -456,6 +476,30 @@ int main(void) {
       }
 
     }
+
+    // Variables for managing background processes
+    // Do not need to persist on subsequent loop iterations
+    pid_t child_proc_pid = 0; /* To hold pid of unwaited-for background process */
+    int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
+    
+    // 1a. Manage background processes: Check for any unwaited-for background processes in the same process group ID as smallsh
+    while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
+      // Use of macros based on CS344 modules and Linux Programming Interface text
+      if (WIFEXITED(child_proc_status)) {
+        if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
+      } else if (WIFSIGNALED(child_proc_status)) {
+        if (fprintf(stderr, "Child process %jd done. Signaled %d.\n", (intmax_t) child_proc_pid, WTERMSIG(child_proc_status)) < 0) goto exit;
+      } else if (WIFSTOPPED(child_proc_status)) {
+        if (kill(child_proc_pid, SIGCONT) == -1) err(errno, "Unable to send SIGCONT signal");
+        if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) child_proc_pid) < 0) goto exit;
+      }
+    }
+    
+    // Checking errno taken from Linux Programming Interface wait example, chap. 26
+    // ECHILD indicates there were no unwaited for processes
+    if (errno != ECHILD && errno != 0) goto exit;
+    // Reset errno to remove ECHILD error if it exists
+    errno = 0;
 
     // Free word_tokens and line at end of each loop iteration to avoid memory leaks
     if (output_file != NULL) free(output_file);
