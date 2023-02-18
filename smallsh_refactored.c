@@ -77,9 +77,6 @@ int main(void) {
   pid_t last_bg_proc_pid = 0; /* pid of most recent background process. Used for $! expansion. */
   int last_fg_exit_status = 0; /* Exit status of last-run foreground process. Used for $? expansion.  Default is 0. */
 
-  // int child_proc_status;
-  // pid_t child_proc_pid;
-  // pid_t group_pid = 0; /* For use in waitpid to get the process group for all children with calling process's process group ID */
   char const *restrict ifs_str = "IFS"; /* Environment variable name for getting value of delimiter characters. Used for word splitting. */
   char const *restrict prompt_str = "PS1"; /* Environment variable name for getting value of PS1 variable. Used for PS1 expansino. */
   char *line = NULL; /* Stores result of command line passed to smallsh */
@@ -127,18 +124,25 @@ int main(void) {
     //1c. Read a line of input from stdin
     // Code copied from example in smallsh assignment specs
     ssize_t line_length = getline(&line, &n, stdin);
-    if (line_length == -1 && errno != EOF) goto exit;
+    // if (line_length == -1 && errno != EOF) goto exit;
     
+    // int is_feof = false;
     // Clear EOF and error indicators for stdin if EOF encountered
     if (feof(stdin) != 0) {
+      // fprintf(stderr, "EOF detected\n");
       clearerr(stdin); /* Per man pages clearerr should not fail */
-      free(line); // ?
-      n = 0;
+
+      // free(line); // ?
+      // is_feof = true;
+      // n = 0;
+      // line = malloc(sizeof (char) * (size_t) 7);
       // line = "exit $?"; /* EOF on stdin interpreted as exit $? command */
       // line_length = strlen(line);
-      goto exit;
+      // goto exit;
     }
-
+    // if (is_feof) line = "exit $?";
+    // fprintf(stderr, "Line is %s\n", line);
+    if (line_length == -1 && errno != EOF) goto exit;
     // Reset errno in case EOF was encountered when reading from stdin
     errno = 0;
 
@@ -149,7 +153,7 @@ int main(void) {
     char *word_delim = NULL; /* Delimiter should not persist through loop iterations. */
     char *temp_delim = getenv(ifs_str); /* Avoid accidentally overwriting IFS value. */
     if (!temp_delim) {
-      word_delim = "\t\n"; /* Set delimiter to default of IFS is null */
+      word_delim = " \t\n"; /* Set delimiter to default of IFS is null */
     } else {
       word_delim = temp_delim;
     }
@@ -212,33 +216,40 @@ int main(void) {
       // Expand $$ instances
       target_pattern = "$$";
       char proc_pid_as_str[max_len_buff];
+      char *sub2 = NULL;
       memset(proc_pid_as_str, '\0', max_len_buff);
       if (snprintf(proc_pid_as_str, max_len_buff-1, "%jd", (intmax_t) shell_pid) < 0) goto exit;
-      substitution = proc_pid_as_str;
-      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
+      sub2 = proc_pid_as_str;
+      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, sub2);
       if (errno != 0) goto exit;
 
       // Expand $? instances
       target_pattern = "$?";
       char exit_status_as_str[max_len_buff];
+      char *sub3 = NULL;
       memset(exit_status_as_str, '\0', max_len_buff);
       if (snprintf(exit_status_as_str, max_len_buff-1, "%d", last_fg_exit_status) < 0) goto exit;
-      substitution = exit_status_as_str;
-      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
+      sub3 = exit_status_as_str;
+      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, sub3);
       if (errno != 0) goto exit;
 
       // Expand $! instances
       target_pattern = "$!";
-      if (last_bg_proc_pid == 0) {
-        substitution = "";
-      } else {
+      char *sub4 = NULL;
+      if (last_bg_proc_pid != 0) {
+        sub4 = "";
+      // } else {
         char last_bg_proc_pid_str[max_len_buff];
         memset(last_bg_proc_pid_str, '\0', max_len_buff);
         if (snprintf(last_bg_proc_pid_str, max_len_buff-1, "%d", last_bg_proc_pid) < 0) goto exit;
-        substitution = last_bg_proc_pid_str;
+        sub4 = last_bg_proc_pid_str;
+      
+        //fprintf(stderr, "$! expands to %s\n", sub4);
+        word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, sub4);
+       //fprintf(stderr, "Sub4 is %s after expansion\n", sub4);
+      //if (i == 1 && strcmp(substitution, "") != 0) (pid_t) fg_as_int = atoi(word_tokens[i]);
+        if (errno != 0) goto exit;
       }
-      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
-      if (errno != 0) goto exit;
     }
     
     // 4. Parsing
@@ -471,6 +482,7 @@ int main(void) {
             }
           } else { /* Do not wait for background process */
             last_bg_proc_pid = new_child_pid;
+            // fprintf(stderr, "Running %jd as background process. New $! variable is %jd\n", (intmax_t) new_child_pid, (intmax_t) last_bg_proc_pid);
           }
           break;
       }
