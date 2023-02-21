@@ -14,7 +14,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <ctype.h>
-
+#include <signal.h>
 
 /* Free word_tokens function adapted from free_file_list function in CS344 tree assignment skeleton code
 * Parameters: char **word_token_array (array of pointers to word tokens created by strtok)
@@ -68,6 +68,9 @@ str_gsub_return:
   return expanded_str;
 }
 
+void handle_SIGINT(int signal_no) {
+} /* Signal handler for SIGINT that does nothing ? */ 
+
 int main(void) {
   // Variables that must maintain value and access outside of main loop
   size_t max_len_buff = 30; /* For creating a large enough buffer as needed */
@@ -82,18 +85,26 @@ int main(void) {
   char *line = NULL; /* Stores result of command line passed to smallsh */
   char **word_tokens = NULL; /* Stores pointers to words/tokens. Used for */
 
+  // Set up signal set and signal handler
+  // Signal set/signal handler code adapted from example in CS344's Signal Handling exploration
+  sigset_t sig_set;
+  if (sigemptyset(&sig_set) != 0) goto exit; /* Ensure signal set is empty and error check sigemptyset() */
+  struct sigaction SIGINT_action = {0}, ignore_action = {0};
+  ignore_action.sa_handler = SIG_IGN;
+  if (sigaction(SIGTSTP, &ignore_action, NULL) != 0) goto exit; /* SIGTSTP should always be ignored */
+
   // Explicitly set errno to 0 at start
   errno = 0;
 
   // Infinite loop performs shell functionality
   for (;;) {
-    // Variables for managing background processes
+        // Variables for managing background processes
     // Do not need to persist on subsequent loop iterations
-    // pid_t child_proc_pid = 0; /* To hold pid of unwaited-for background process */
-    // int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
-    
+    pid_t child_proc_pid = 0; /* To hold pid of unwaited-for background process */
+    int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
+
     // 1a. Manage background processes: Check for any unwaited-for background processes in the same process group ID as smallsh
-    /* while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
+    while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
       // Use of macros based on CS344 modules and Linux Programming Interface text
       if (WIFEXITED(child_proc_status)) {
         if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
@@ -109,8 +120,8 @@ int main(void) {
     // ECHILD indicates there were no unwaited for processes
     if (errno != ECHILD && errno != 0) goto exit;
     // Reset errno to remove ECHILD error if it exists
-    errno = 0;*/
-    
+    errno = 0;
+
     //1b. PS1 expansion/prompt display
     char *prompt = NULL; /* Prompt should not persist through loop iterations. Retrieve on each iteration. */
     char *temp_prompt = getenv(prompt_str); /* Avoid accidentally overwriting PS1 value. */
@@ -120,34 +131,49 @@ int main(void) {
       prompt = temp_prompt;
     }
     if (fprintf(stderr, "%s", prompt) < 0) goto exit;
-    
     //1c. Read a line of input from stdin
     // Code copied from example in smallsh assignment specs
+    SIGINT_action.sa_handler = handle_SIGINT; /* Register SIGINT to handler that does nothing */
+    if (sigfillset(&SIGINT_action.sa_mask) != 0) goto exit;
+    SIGINT_action.sa_flags = 0;
+    if (sigaction(SIGINT, &SIGINT_action, NULL) != 0) goto exit;
+
     ssize_t line_length = getline(&line, &n, stdin);
-    // if (line_length == -1 && errno != EOF) goto exit;
-    
-    // int is_feof = false;
+    if (errno == EINTR) {
+      clearerr(stdin);
+      errno = 0;
+      if (fprintf(stderr, "\n") < 0) goto exit;
+      continue;
+    } else if (errno != 0) goto exit;
+    if (sigdelset(&SIGINT_action.sa_mask, SIGINT) != 0) goto exit;
+    if (sigaction(SIGINT, &ignore_action, NULL) != 0) goto exit;
     // Clear EOF and error indicators for stdin if EOF encountered
     if (feof(stdin) != 0) {
-      // fprintf(stderr, "EOF detected\n");
+      fprintf(stderr, "EOF detected\n");
       clearerr(stdin); /* Per man pages clearerr should not fail */
 
       // free(line); // ?
       // is_feof = true;
       // n = 0;
-      // line = malloc(sizeof (char) * (size_t) 7);
-      // line = "exit $?"; /* EOF on stdin interpreted as exit $? command */
+      // line = malloc(sizeof (char) * (size_t) 8);
+      // const char *temp_str = "exit $?\n";
+      // line = strdup(temp_str);
+      // if (!line) { /* Error check strdup */
+        // fprintf(stderr, "Error occurred in strdup"); /* No fprintf error check since next line exits program */
+        // goto exit;
+      // }
+      // line = "exit $?\n"; /* EOF on stdin interpreted as exit $? command */
       // line_length = strlen(line);
       // goto exit;
     }
+    // fprintf(stderr, "N is %zu\n", n);
+    // fprintf(stderr, "LIne is %s\n", line);
     // if (is_feof) line = "exit $?";
     // fprintf(stderr, "Line is %s\n", line);
     if (line_length == -1 && errno != EOF) goto exit;
     // Reset errno in case EOF was encountered when reading from stdin
     errno = 0;
 
-    // SIGNAL HANDLING TO BE IMPLEMENTED HERE
-    
     //2. Word splitting
     // Get IFS environment variable value and set delimiter for use in strtok
     char *word_delim = NULL; /* Delimiter should not persist through loop iterations. */
@@ -238,16 +264,12 @@ int main(void) {
       char *sub4 = NULL;
       if (last_bg_proc_pid != 0) {
         sub4 = "";
-      // } else {
         char last_bg_proc_pid_str[max_len_buff];
         memset(last_bg_proc_pid_str, '\0', max_len_buff);
         if (snprintf(last_bg_proc_pid_str, max_len_buff-1, "%d", last_bg_proc_pid) < 0) goto exit;
         sub4 = last_bg_proc_pid_str;
       
-        //fprintf(stderr, "$! expands to %s\n", sub4);
         word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, sub4);
-       //fprintf(stderr, "Sub4 is %s after expansion\n", sub4);
-      //if (i == 1 && strcmp(substitution, "") != 0) (pid_t) fg_as_int = atoi(word_tokens[i]);
         if (errno != 0) goto exit;
       }
     }
@@ -317,7 +339,9 @@ int main(void) {
     // Insert NULL pointer at end here
     word_tokens = realloc(word_tokens, sizeof (char **[num_tokens+1]));
     word_tokens[num_tokens] = NULL;
-    // Branch for no command word entered in stdin
+
+    // Reset SIGINT?
+
 
     // Branch for built-in command exit
     // First word/token is command
@@ -328,7 +352,6 @@ int main(void) {
         goto exit;
       }
       
-      // MISSING: SEND ALL CHILD PROCESSES SIGINT BEFORE EXITING
       int shell_exit_status = last_fg_exit_status;
       if (num_tokens == 2) {
         char *exit_status_str = NULL;
@@ -349,19 +372,21 @@ int main(void) {
           errno = -1;
           goto exit;
         }
+        // Send all children processes in same process group a SIGINT signal
+        pid_t proc_pid;
+        int proc_status;
+        while ((proc_pid = waitpid(0, &proc_status, WUNTRACED | WCONTINUED)) > 0) {
+          if (kill(proc_pid, SIGINT) == -1) err(errno, "Unable to send SIGINT signal");
+        }
         last_fg_exit_status = shell_exit_status;
         free(exit_status_str);
         fprintf(stderr, "\nexit\n");
-        // fprintf(stderr, "Exit status is %d\n", shell_exit_status);
         exit(shell_exit_status);
       } else if (num_tokens == 1) {
         fprintf(stderr, "\nexit\n");
-        // fprintf(stderr, "Exit status is %d\n", shell_exit_status);
         exit(shell_exit_status);
       } else {
-        // MISSING: ERROR IF ARG TO EXIT IS NOT AN INT
         fprintf(stderr, "\nexit\n");
-        // shell_exit_status = atoi(word_tokens[1]);
         exit(shell_exit_status);
       }
     } else if (strcmp(word_tokens[0], "cd") == 0) {  /* Branch for built-in command cd */
@@ -369,8 +394,6 @@ int main(void) {
         errno = -1;
         fprintf(stderr, "Too many arguments passed to cd command\n");
         goto exit;
-        // continue;
-        //goto reset;
       }
 
       char *cd_arg = NULL;
@@ -383,8 +406,6 @@ int main(void) {
       
       if (chdir(cd_arg) != 0) {
         fprintf(stderr, "Unable to change directory\n");
-        // continue;
-        //goto reset;
         goto exit;
       }
 
@@ -401,7 +422,6 @@ int main(void) {
           goto exit; /* Error checks fork */
           break;
         case 0: /* Process is child */
-          // MISSING: Handling output redirection operator and input redirection opperator
           /* Redirection handling adapted from Linux Programming Interface section 27.4 example code */
           if (input_file) {
             int in_fd;
@@ -423,7 +443,6 @@ int main(void) {
           }
 
           if (output_file) {
-           // fprintf(stderr, "Redirect output\n");
             int out_fd;
             out_fd = open(output_file, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
             if (out_fd == -1) {
@@ -457,17 +476,9 @@ int main(void) {
           fflush(stdout);
           fflush(stderr);
           if (!is_bg_proc) {
-            // fprintf(stderr, "Wait for child process %jd\n", (intmax_t) new_child_pid);
             pid_t waitpid_return_val = waitpid(new_child_pid, &new_child_status, 0);
             if (waitpid_return_val == -1) goto exit;
-            // if (waitpid(new_child_pid, &new_child_status, 0) == -1) goto exit; /* Blocking wait for child process with error checking */
-            // Set shell variable $?
-            //if (!new_child_status) {
-              //fprintf(stderr, "An error occurred in waitpid. Child %jd status is %d\n", (intmax_t) waitpid_return_val, new_child_status);
-              //goto exit;
-            //}
 
-            // last_fg_exit_status = new_child_status;
             if (WIFSIGNALED(new_child_status)) {
               last_fg_exit_status = 128 + WTERMSIG(new_child_status);
             } else if (WIFSTOPPED(new_child_status)) {
@@ -482,20 +493,18 @@ int main(void) {
             }
           } else { /* Do not wait for background process */
             last_bg_proc_pid = new_child_pid;
-            // fprintf(stderr, "Running %jd as background process. New $! variable is %jd\n", (intmax_t) new_child_pid, (intmax_t) last_bg_proc_pid);
           }
           break;
       }
-
     }
 
     // Variables for managing background processes
     // Do not need to persist on subsequent loop iterations
-    pid_t child_proc_pid = 0; /* To hold pid of unwaited-for background process */
-    int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
+    // pid_t child_proc_pid = 0; /* To hold pid of unwaited-for background process */
+    // int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
     
     // 1a. Manage background processes: Check for any unwaited-for background processes in the same process group ID as smallsh
-    while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
+    /* while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
       // Use of macros based on CS344 modules and Linux Programming Interface text
       if (WIFEXITED(child_proc_status)) {
         if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
@@ -505,7 +514,7 @@ int main(void) {
         if (kill(child_proc_pid, SIGCONT) == -1) err(errno, "Unable to send SIGCONT signal");
         if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) child_proc_pid) < 0) goto exit;
       }
-    }
+    } */
     
     // Checking errno taken from Linux Programming Interface wait example, chap. 26
     // ECHILD indicates there were no unwaited for processes
