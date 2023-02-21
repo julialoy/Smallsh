@@ -88,6 +88,7 @@ int main(void) {
   // Set up signal set and signal handler
   // Signal set/signal handler code adapted from example in CS344's Signal Handling exploration
   sigset_t sig_set;
+  struct sigaction old_SIGINT_action;
   if (sigemptyset(&sig_set) != 0) goto exit; /* Ensure signal set is empty and error check sigemptyset() */
   struct sigaction SIGINT_action = {0}, ignore_action = {0};
   ignore_action.sa_handler = SIG_IGN;
@@ -136,7 +137,7 @@ int main(void) {
     SIGINT_action.sa_handler = handle_SIGINT; /* Register SIGINT to handler that does nothing */
     if (sigfillset(&SIGINT_action.sa_mask) != 0) goto exit;
     SIGINT_action.sa_flags = 0;
-    if (sigaction(SIGINT, &SIGINT_action, NULL) != 0) goto exit;
+    if (sigaction(SIGINT, &SIGINT_action, &old_SIGINT_action) != 0) goto exit;
 
     ssize_t line_length = getline(&line, &n, stdin);
     if (errno == EINTR) {
@@ -146,24 +147,27 @@ int main(void) {
       continue;
     } else if (errno != 0) goto exit;
     if (sigdelset(&SIGINT_action.sa_mask, SIGINT) != 0) goto exit;
-    if (sigaction(SIGINT, &ignore_action, NULL) != 0) goto exit;
+    if (sigaction(SIGINT, &old_SIGINT_action, NULL) != 0) goto exit;
+    // if (sigaction(SIGINT, &ignore_action, NULL) != 0) goto exit;
     // Clear EOF and error indicators for stdin if EOF encountered
     if (feof(stdin) != 0) {
-      fprintf(stderr, "EOF detected\n");
+      // fprintf(stderr, "EOF detected\n");
       clearerr(stdin); /* Per man pages clearerr should not fail */
 
-      // free(line); // ?
+      free(line); // ?
+      // if (fprintf(stderr, "\nexit\n") < 0) goto exit;
+      // exit(0);
       // is_feof = true;
       // n = 0;
-      // line = malloc(sizeof (char) * (size_t) 8);
-      // const char *temp_str = "exit $?\n";
-      // line = strdup(temp_str);
-      // if (!line) { /* Error check strdup */
-        // fprintf(stderr, "Error occurred in strdup"); /* No fprintf error check since next line exits program */
-        // goto exit;
-      // }
+      line = malloc(sizeof (char) * (size_t) 8);
+      const char *temp_str = "exit $?\n";
+      line = strdup(temp_str);
+      if (!line) { /* Error check strdup */
+        fprintf(stderr, "Error occurred in strdup"); /* No fprintf error check since next line exits program */
+        goto exit;
+      }
       // line = "exit $?\n"; /* EOF on stdin interpreted as exit $? command */
-      // line_length = strlen(line);
+      line_length = strlen(line);
       // goto exit;
     }
     // fprintf(stderr, "N is %zu\n", n);
@@ -342,7 +346,7 @@ int main(void) {
 
     // Reset SIGINT?
 
-
+    // fprintf(stderr, "Word token 1 = %s\n", word_tokens[0]);
     // Branch for built-in command exit
     // First word/token is command
     if (strcmp(word_tokens[0], "exit") == 0) {
@@ -375,7 +379,7 @@ int main(void) {
         // Send all children processes in same process group a SIGINT signal
         pid_t proc_pid;
         int proc_status;
-        while ((proc_pid = waitpid(0, &proc_status, WUNTRACED | WCONTINUED)) > 0) {
+        while ((proc_pid = waitpid(0, &proc_status, WUNTRACED | WCONTINUED | WNOHANG)) > 0) {
           if (kill(proc_pid, SIGINT) == -1) err(errno, "Unable to send SIGINT signal");
         }
         last_fg_exit_status = shell_exit_status;
