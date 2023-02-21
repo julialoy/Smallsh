@@ -151,7 +151,7 @@ int main(void) {
     // if (sigaction(SIGINT, &ignore_action, NULL) != 0) goto exit;
     // Clear EOF and error indicators for stdin if EOF encountered
     if (feof(stdin) != 0) {
-      // fprintf(stderr, "EOF detected\n");
+     //  fprintf(stderr, "EOF detected\n");
       clearerr(stdin); /* Per man pages clearerr should not fail */
 
       free(line); // ?
@@ -159,16 +159,24 @@ int main(void) {
       // exit(0);
       // is_feof = true;
       // n = 0;
-      line = malloc(sizeof (char) * (size_t) 8);
-      const char *temp_str = "exit $?\n";
-      line = strdup(temp_str);
-      if (!line) { /* Error check strdup */
-        fprintf(stderr, "Error occurred in strdup"); /* No fprintf error check since next line exits program */
-        goto exit;
-      }
+      //line = malloc(sizeof (char) * (size_t) 8);
+      //const char *temp_str = "exit $?\n";
+      //line = strdup(temp_str);
+      //if (!line) { /* Error check strdup */
+        //fprintf(stderr, "Error occurred in strdup"); /* No fprintf error check since next line exits program */
+        //goto exit;
+      //}
       // line = "exit $?\n"; /* EOF on stdin interpreted as exit $? command */
-      line_length = strlen(line);
+      //line_length = strlen(line);
       // goto exit;
+      pid_t temp_proc_pid;
+      int temp_proc_status;
+      while ((temp_proc_pid = waitpid(0, &temp_proc_status, WUNTRACED | WCONTINUED | WNOHANG)) > 0) {
+          if (kill(temp_proc_pid, SIGINT) == -1) err (errno, "Unable to send SIGINT signal to child process %jd", (intmax_t) temp_proc_pid);
+      }
+      if (!last_fg_exit_status) last_fg_exit_status = 0;
+      if (fprintf(stderr, "\nexit\n") < 0) goto exit;
+      exit(last_fg_exit_status);
     }
     // fprintf(stderr, "N is %zu\n", n);
     // fprintf(stderr, "LIne is %s\n", line);
@@ -377,11 +385,11 @@ int main(void) {
           goto exit;
         }
         // Send all children processes in same process group a SIGINT signal
-        pid_t proc_pid;
+/*        pid_t proc_pid;
         int proc_status;
         while ((proc_pid = waitpid(0, &proc_status, WUNTRACED | WCONTINUED | WNOHANG)) > 0) {
           if (kill(proc_pid, SIGINT) == -1) err(errno, "Unable to send SIGINT signal");
-        }
+        } */
         last_fg_exit_status = shell_exit_status;
         free(exit_status_str);
         fprintf(stderr, "\nexit\n");
