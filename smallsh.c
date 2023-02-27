@@ -14,27 +14,40 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <ctype.h>
+#include <signal.h>
 
-// String search function
-// Copied from instructor's string search function video linked in CS344's smallsh assignment specs
-// Parameters: string to be searched, pattern to search for, substitution for found pattern
+/* Free word_tokens function adapted from free_file_list function in CS344 tree assignment skeleton code
+* Parameters: char **word_token_array (array of pointers to word tokens created by strtok)
+*             size_t token_num (number of tokens created)
+* Returns:    no return value */
+static void free_word_tokens(char **word_token_array, size_t token_num) {
+  for (size_t i = 0; i < token_num; i++) {
+    free(word_token_array[i]);
+  }
+  free(word_token_array);
+}
+
+/* String search function copied from instructor's string search function video
+* Parameters: char *restrict *restrict orig_str (string to be searched), 
+*             char const *restrict pattern (substring to search for), 
+*             char const *restruct sub (substitution string for found pattern)
+* Returns:    char *expanded_str (contains orig_str with the pattern replaced or is orig_str if pattern not found) */
 char *str_gsub(char *restrict *restrict orig_str, char const *restrict pattern, char const *restrict sub) {
   char *expanded_str = *orig_str;
   size_t orig_str_len = strlen(expanded_str);
   size_t const pattern_len = strlen(pattern), sub_len = strlen(sub);
   
-  // if (fprintf(stderr, "Searching for %s in %s, replacing with %s\n", pattern, *orig_str, sub) < 0) goto str_gsub_return;
+  // If pattern exists in expanded_str, replace
   for (;(expanded_str = strstr(expanded_str, pattern));) {
-    // fprintf(stderr, "Pattern (%s) found (%s)\n", pattern, expanded_str);
-    ptrdiff_t offset = expanded_str - *orig_str;
+    ptrdiff_t offset = expanded_str - *orig_str; /* Track current place in expanded_str */
     if (sub_len > pattern_len) {
-      // fprintf(stderr, "Realloc expanded str to %zu + %zu - %zu + 1\n", orig_str_len, sub_len, pattern_len);
       expanded_str = realloc(*orig_str, sizeof **orig_str * (orig_str_len + sub_len - pattern_len + 1));
-      if (!expanded_str) goto str_gsub_return;
+      if (!expanded_str) goto str_gsub_return; /* Error check realloc */
       *orig_str = expanded_str;
       expanded_str = *orig_str + offset;
     }
     
+    // Replace pattern with substitution and update orig_str_len to correct length
     memmove(expanded_str + sub_len, expanded_str + pattern_len, orig_str_len + 1 - offset - pattern_len);
     memcpy(expanded_str, sub, sub_len);
     orig_str_len = orig_str_len + sub_len - pattern_len;
@@ -43,363 +56,422 @@ char *str_gsub(char *restrict *restrict orig_str, char const *restrict pattern, 
 
   expanded_str = *orig_str;
   if (sub_len < pattern_len) {
-    // fprintf(stderr, "Realloc expanded str to %zu +1\n", orig_str_len);
     expanded_str = realloc(*orig_str, sizeof **orig_str * (orig_str_len + 1));
-    if (!expanded_str) {
+    if (!expanded_str) {  /* Error check realloc */
       expanded_str = *orig_str;
       goto str_gsub_return;
     }
     *orig_str = expanded_str;
   }
 
-  // fprintf(stderr, "Final string is %s\n", expanded_str);
-
 str_gsub_return:
   return expanded_str;
 }
 
-/*int manage_bg_procs(pid_t group_pid, int &target_proc_status) {
-  while ((target_proc_pid = waitpid(group_pid, &target_proc_status, WUNTRACED | WNOHANG | WCONTINUED) > 0)) {
-    if (WIFEXITED(target_proc_status)) {
-      if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) target_proc_status, WEXITSTATUS(target_proc_status)) < 0) goto exit_manage_bg_procs;
-    } else if (WIFSIGNALED(target_proc_status)) {
-      if (fprintf(stder, "Child process %jd done. Signaled %d.\n", (intmax_t) target_proc_status, WTERMSIG(target_proc_status)) < 0) goto exit_manage_bg_procs;
-    } else if (WIFSTOPPED(target_proc_status)) {
-      if (kill(target_proc_pid, SIGCONT) == -1) goto exit_manage_bg_procs;
-      if (fprintf(stderr, "Child process %jd stopped. Continuing.\n," (intmax_t) target_proc_pid) < 0) goto exit_manage_bg_procs;
-    }
+/* Signal handler for SIGINT that does nothing per project specs 
+ * based on examples in CS344's signal handling modules
+ * Parameters: int signal_no (signal number)
+ * Returns: nothing */
+void handle_SIGINT(int signal_no) {
+}
+
+/* Send all children processes in same process group a SIGINT signal prior to exiting
+ * Parameters: None
+ * Returns: 0 on success, -1 if an error occurred */
+int handle_child_procs_exit(void) {
+  pid_t proc_pid;
+  int proc_status;
+  while ((proc_pid = waitpid(0, &proc_status, WUNTRACED | WCONTINUED | WNOHANG)) > 0) {
+    if (kill(proc_pid, SIGINT) == -1) err(errno, "Unable to send SIGINT signal");
+    return -1;
   }
+  return 0;
+}
 
-exit_manage_bg_procs:
-  return errno ? -1 : 0;
-}*/
+static void cleanup_memory(size_t number_tokens, char **word_tokens_array, char *restrict user_inpt_line, char *restrict input_filename, char *restrict output_filename) {
+  if (input_filename != NULL) free(input_filename);
+  if (output_filename != NULL) free(output_filename);
+  if (word_tokens_array && number_tokens > 0) free_word_tokens(word_tokens_array, number_tokens);
+  if (user_inpt_line != NULL) free(user_inpt_line);
+}
 
-// Main function takes no arguments:
-// User will supply input in response to the command prompt
 int main(void) {
-  // Set some variables we will use inside the main loop
-  size_t n = 0, num_tokens = 0; /* num_tokens used for tracking number of tokens/pointers in word_tokens array */
-  int child_proc_status;
+  // Variables that must maintain value and access outside of main loop
+  size_t max_len_buff = 30; /* For creating a large enough buffer as needed */
+  size_t n = 0; /* For holding allocated size of line var */
+  size_t num_tokens = 0;
   pid_t shell_pid = getpid();
-  pid_t child_proc_pid;
-  pid_t group_pid = 0; /* For use in waitpid to get the process group for all children with calling process's process group ID */
-  
-  char *line = NULL;
-  char const *restrict ifs_var_name = "IFS";
-  char **word_tokens = NULL; /* Initially set to NULL; per assignment specs, feeling fancy */
-  int last_fg_exit_status = 0; /* To hold the exit status of the last foreground process. Default is 0. */
-  int last_bg_proc_pid = -1; /* To hold the PID of the most recent background process. Cast to char type for str search. Default is empty str. */
-  size_t max_len_buff = 20; /*To be used with snprintf for changing number types to strings */
-  // Explicitly set errno prior to doing anything
-  errno = 0;
-  //int main_errno = errno; /* For saving errno status of main function when needed */
+  pid_t last_bg_proc_pid = 0; /* Used for $! expansion. */
+  int last_fg_exit_status = 0; /* Used for $? expansion.  Default is 0. */
 
-  // Infinite loop to perform the shell functionality
+  char const *restrict ifs_str = "IFS"; /* Environment variable name for getting value of delimiter characters. Used for word splitting. */
+  char const *restrict prompt_str = "PS1"; /* Environment variable name for getting value of PS1 variable. Used for PS1 expansino. */
+  char *line = NULL;
+  char **word_tokens = NULL;
+
+  // Setting up sigaction structs and initial signal handling based on and adapted from
+  // Linux Programming Interface chaps. 20 and 21, esp. 20.13 and listing 21-1
+  struct sigaction SIGINT_sa;
+  struct sigaction SIGINT_init_disp_sa;
+  struct sigaction SIGTSTP_sa;
+  struct sigaction SIGTSTP_init_disp_sa;
+
+  if (sigemptyset(&SIGINT_sa.sa_mask) != 0) goto exit;
+  if (sigemptyset(&SIGTSTP_sa.sa_mask) != 0) goto exit;
+  SIGINT_sa.sa_flags = 0;
+  SIGTSTP_sa.sa_flags = 0;
+  
+  // Set SIGINT handler and record initial disposition of SIGINT
+  SIGINT_sa.sa_handler = handle_SIGINT; 
+  if (sigaction(SIGINT, &SIGINT_sa, &SIGINT_init_disp_sa) == -1) goto exit;
+  
+  // Set SIGTSTP to be ignored and record initial disposition of SIGTSTP
+  SIGTSTP_sa.sa_handler = SIG_IGN;
+  if (sigaction(SIGTSTP, &SIGTSTP_sa, &SIGTSTP_init_disp_sa) != 0) goto exit; /* SIGTSTP should always be ignored */
+
+  // Explicitly set errno to 0 at start
+  errno = 0;
+
   for (;;) {
-    // 1a. Manage background processes
-    // Check for any unwaited-for background processes in the same process group ID as this program
-    // Loop through all child processes that have the same process group ID
-    // Passing 0 to waitpid as the pid means waitpid will check all children with the current process's process group ID
-    // Print correct info message to stderr for all child processes found
-    // fprintf(stderr, "Wait for bg processes\n");
-    /*while ((child_proc_pid = waitpid(group_pid, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
-      // Use of macros comes from CS344 modules and Linux Programming Interface text
+    // Set SIGINT to be ignored prior to calling getline
+    SIGINT_sa.sa_handler = SIG_IGN;
+    if (sigaction(SIGINT, &SIGINT_sa, NULL) != 0) goto exit;
+    
+    /*
+     * MANAGE BACKGROUND PROCESSES
+     */
+    pid_t child_proc_pid = 0; /* To hold pid of unwaited-for background process */
+    int child_proc_status = 0; /* To hold exit status or signal of unwaited-for backgorund process*/
+    
+    // Checking for child process status based on CS344 modules and Linux Programming Interface text
+    while ((child_proc_pid = waitpid(0, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
       if (WIFEXITED(child_proc_status)) {
         if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
       } else if (WIFSIGNALED(child_proc_status)) {
         if (fprintf(stderr, "Child process %jd done. Signaled %d.\n", (intmax_t) child_proc_pid, WTERMSIG(child_proc_status)) < 0) goto exit;
       } else if (WIFSTOPPED(child_proc_status)) {
-        if (kill(child_proc_pid, SIGCONT) == -1) err(errno, "Unable to send signal");
+        if (kill(child_proc_pid, SIGCONT) == -1) err(errno, "Unable to send SIGCONT signal");
         if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) child_proc_pid) < 0) goto exit;
       }
-    }*/
-    // fprintf(stderr, "Finished with bg processes\n");
-    //if (manage_bg_procs(group_pid, &child_proc_status) < 0 && errno != ECHILD) goto exit;
-    // Checking errno taken from Linux Programming Interface wait example, chap. 26
-    if (errno != ECHILD && errno != 0) goto exit;
-    // Reset errno; it is OK if errno was set to ECHILD
-    // ECHILD indicates there are no child processes found
-    errno = 0;
-    
-    //1b. PS1 expansion/prompt display
-    // Determine if user or root and print prompt for user
-    char *prompt = NULL;
-    prompt = getenv("PS1");
-    if (!prompt) prompt = "";
-    if (fprintf(stderr, "%s", prompt) < 0) goto exit;
-
-    
-    //1c. Reading a line of input
-    // Read a line of input from stdin
-    // Code taken from example in smallsh assignment specs
-    ssize_t line_length = getline(&line, &n, stdin);
-    if (line_length == -1 && errno != EOF) goto exit;
-    // if (fprintf(stderr, "Line entered was: %s", line) < 0) goto exit;
-    
-    // Clear EOF and error indicators for stdin
-    if (feof(stdin) != 0) {
-      // Per man pages this function should not fail
-      // if (fprintf(stderr, "Clearing EOF and errors. Error is %d. EOF is %d", errno, feof(stdin)) < 0) goto exit; /* DEBUGGING */ 
-      clearerr(stdin);
-      // fprintf(stderr, "Memset line\n");
-      memset(line, 0, line_length);
-      line = "exit $?";
-      line_length = strlen(line);
-      // fprintf(stderr, "New line is %s\n", line);
     }
+    
+    // Checking errno taken from Linux Programming Interface wait example, chap. 26
+    // ECHILD indicates there were no unwaited for processes
+    if (errno != ECHILD && errno != 0) goto exit;
+    // Reset errno to remove ECHILD error if it exists
+    errno = 0;
+
+    /*
+     * PS1 EXPANSIONS/PROMPT DISPLAY
+     */
+    char *prompt = NULL; /* Prompt should not persist through loop iterations. Retrieve on each iteration. */
+    char *temp_prompt = getenv(prompt_str); /* Avoid accidentally overwriting PS1 value. */
+    if (!temp_prompt) {
+      prompt = ""; /* PS1 default value is an empty string */
+    } else {
+      prompt = temp_prompt;
+    }
+    if (fprintf(stderr, "%s", prompt) < 0) goto exit;
+    
+    /*
+     * READ A LINE OF INPUT FROM STDIN
+     */
+    // Set signal handler for SIGINT for correct functionality during getline call
+    SIGINT_sa.sa_handler = handle_SIGINT;
+    if (sigaction(SIGINT, &SIGINT_sa, NULL) != 0) goto exit;
+    ssize_t line_length = getline(&line, &n, stdin);
+    
+    // If signal interrupted during getline, clear errno, print a new line, and reprompt
+    if (errno == EINTR) {
+      clearerr(stdin);
+      errno = 0;
+      if (fprintf(stderr, "\n") < 0) goto exit;
+      continue;
+    }
+
+    // After getline call ignore SIGINT
+    SIGINT_sa.sa_handler = SIG_IGN;
+    if (sigaction(SIGINT, &SIGINT_sa, NULL) != 0) goto exit;
+
+    // Clear EOF and error indicators for stdin if EOF encountered, exit smallsh
+    if (feof(stdin) != 0) {
+      clearerr(stdin); /* Per man pages clearerr should not fail */
+      if (handle_child_procs_exit() != 0) {
+        fprintf(stderr, "An error occurred while signaling child processes\n");
+        goto exit;
+      }
+      if (!last_fg_exit_status) last_fg_exit_status = 0;
+      if (fprintf(stderr, "\nexit\n") < 0) goto exit;
+      free(line);
+      exit(last_fg_exit_status);
+    }
+    
+    if (line_length == -1 && errno != EOF) goto exit;
     // Reset errno in case EOF was encountered when reading from stdin
     errno = 0;
-
-    // SIGNAL HANDLING TO BE IMPLEMENTED HERE
     
-    //2. Word splitting
+    /* 
+     * WORD SPLITTING
+     */
     // Get IFS environment variable value and set delimiter for use in strtok
-    char *word_delim = getenv(ifs_var_name);
-    // Only change value pointed to by word_delim if it is NULL, otherwise may end up changing the env variable
-    if (!word_delim) {
-      word_delim = " \t\n";
+    char *word_delim = NULL; /* Delimiter should not persist through loop iterations. */
+    char *temp_delim = getenv(ifs_str); /* Avoid accidentally overwriting IFS value. */
+    if (!temp_delim) {
+      word_delim = " \t\n"; /* Set delimiter to default of IFS is null */
+    } else {
+      word_delim = temp_delim;
     }
 
     // Split line into words on the given delimiters
-    // Always split at least one time
     char *token = strtok(line, word_delim);
-    char *dup_token;
+    char *dup_token = NULL;
     
     if (!token) continue; /* If there were no words to split, go back to beginning of loop and display prompt. Num_tokens == 0 at this point. Do not reset. */
     dup_token = strdup(token);
-    if (!dup_token) goto exit; /* Error checks strdup */
+    if (!dup_token) goto exit; /* Error check strdup. No need to free dup_token on failure. */
       
     word_tokens = malloc(sizeof (char **[num_tokens + 1])); /* allocate space in tokens; taken from example in Modern C */
-    if (!word_tokens) goto exit; /* Error checks malloc */
+    if (!word_tokens) { /* Error check malloc and free dup_token if error exists */
+      free(dup_token);
+      goto exit;
+    }
     
     word_tokens[num_tokens] = dup_token;
-    ++num_tokens;
+    num_tokens++;
 
     for (;;) {
       token = strtok(NULL, word_delim);
       if (!token) break;
       
       dup_token = strdup(token);
-      if (!dup_token) break;
+      if (!dup_token) goto exit;
 
       word_tokens = realloc(word_tokens, sizeof (char **[num_tokens + 1])); /* Make sure there is enough space in word_tokens for new pointer */
-      if (!word_tokens) goto exit; /* Error checks realloc? Will this lead to losing access to word_tokens if realloc fails? */
-      
+      if (!word_tokens) {
+        free(dup_token);
+        goto exit; /* Error checks realloc? Will this lead to losing access to word_tokens if realloc fails? */
+      }
+
       word_tokens[num_tokens] = dup_token; /* Add pointer to new_token to word_tokens */
-      ++num_tokens;
+      num_tokens++;
     }
-
-    // Explicitly add NULL pointer to end of word_tokens to allow for use as arg to execvp later in shell program
-   /* word_tokens = realloc(word_tokens, sizeof (char **[num_tokens+1]));
-    word_tokens[num_tokens+1] = NULL; */
     
-    // DEBUGGING
-    /* for (size_t y = 0; y < num_tokens+1; y++) {
-      fprintf(stderr, "Token %zd is %s\n", y, word_tokens[y]);
-    }*/
-    // 2. Expansion
-    // String search adapted from instructor's video linked in CS344's smallsh assignment specs
-    // str_gsub(**string, *pattern, *sub)
-
+    /*
+     * ENVIRONMENT VARIABLE EXPANSION
+     */
     for (size_t i = 0; i < num_tokens; ++i) {
       char *target_pattern = NULL;
       char *substitution = NULL;
       char *temp_sub = NULL;
-      // Expand ~/ instances
+      // Expand ~/ instances only if ~/ appears at beginning of word
       if (word_tokens[i][0] == 126 && word_tokens[i][1] == 47) {
-        target_pattern = "~/";
+        target_pattern = "~";
         temp_sub = getenv("HOME");
-        // fprintf(stderr, "HOME env is %s\n", temp_sub);
 
         if (!temp_sub) {
-          // substitution = malloc(sizeof (char *));
           substitution = "";
         } else {
-          // size_t temp_sub_len = strlen(temp_sub);
-          // substitution = malloc(sizeof (char *) * temp_sub_len);
           substitution = strdup(temp_sub);
+          if (!substitution) goto exit;
         }
-        substitution = strcat(substitution, "/");
-  
         word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
       
-        size_t sub_len = strlen(substitution);
-        memset(substitution, '\0', sub_len);
-        // fprintf(stderr, "%s\n", substitution);
-        // free(substitution);
-        substitution = NULL;
+        free(substitution);
         if (errno != 0) goto exit;
       }
-     // substitution = NULL;
+
       // Expand $$ instances
       target_pattern = "$$";
-//      fprintf(stderr, "Shell PID is %jd\n", (intmax_t) shell_pid);
-     char proc_pid_as_str[max_len_buff];
-     memset(proc_pid_as_str, '\0', max_len_buff);
-     
-     if (snprintf(proc_pid_as_str, max_len_buff-1, "%jd", (intmax_t) shell_pid) < 0) goto exit;
-     //if (sprintf(proc_pid_as_str, "%jd", (intmax_t) shell_pid) < 0) goto exit;
-
-//      fprintf(stderr, "Shell PID as string is %s\n", proc_pid_as_str);
-      substitution = proc_pid_as_str;
-      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
+      char proc_pid_as_str[max_len_buff];
+      char *sub2 = NULL;
+      memset(proc_pid_as_str, '\0', max_len_buff);
+      if (snprintf(proc_pid_as_str, max_len_buff-1, "%jd", (intmax_t) shell_pid) < 0) goto exit;
+      sub2 = proc_pid_as_str;
+      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, sub2);
       if (errno != 0) goto exit;
 
       // Expand $? instances
       target_pattern = "$?";
-      /*int last_exit_status;
-      if (waitpid(shell_pid, &last_exit_status, WNOHANG) < 0) goto exit;
-      if (errno != ECHILD && errno != 0) goto exit;
-      if (errno == ECHILD) {
-        last_exit_status = 0;
-      } else {
-        last_exit_status = WIFEXITED(last_exit_status);
-      } */
       char exit_status_as_str[max_len_buff];
+      char *sub3 = NULL;
       memset(exit_status_as_str, '\0', max_len_buff);
-      //char *exit_status_as_str = NULL;
       if (snprintf(exit_status_as_str, max_len_buff-1, "%d", last_fg_exit_status) < 0) goto exit;
-      // if (sprintf(exit_status_as_str, "%d", last_fg_exit_status) < 0) goto exit;
-      substitution = exit_status_as_str;
-  //    fprintf(stderr, "Last exit status is %s\n", substitution);
-      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
+      sub3 = exit_status_as_str;
+      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, sub3);
       if (errno != 0) goto exit;
 
-      // Expande $! instances
+      // Expand $! instances
       target_pattern = "$!";
-      if (last_bg_proc_pid == -1) {
-        substitution = "";
-      } else {
+      char *sub4 = NULL;
+      if (last_bg_proc_pid != 0) {
+        sub4 = "";
         char last_bg_proc_pid_str[max_len_buff];
         memset(last_bg_proc_pid_str, '\0', max_len_buff);
-        // char *last_bg_proc_pid_str = NULL;
         if (snprintf(last_bg_proc_pid_str, max_len_buff-1, "%d", last_bg_proc_pid) < 0) goto exit;
-        // if (sprintf(last_bg_proc_pid_str, "%d", last_bg_proc_pid) < 0) goto exit;
-        substitution = last_bg_proc_pid_str;
+        sub4 = last_bg_proc_pid_str;
+      
+        word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, sub4);
+        if (errno != 0) goto exit;
+      } else { /* pid of 0 indicates last_bg_proc_pid has not been set yet, default for $! is an empty string */
+        sub4 = "";
+        word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, sub4);
       }
-      word_tokens[i] = str_gsub(&word_tokens[i], target_pattern, substitution);
-      if (errno != 0) goto exit;
-      // free(substitution);
     }
     
-    // DEBUGGING/TESTING 
-    /*for (size_t j = 0; j < num_tokens; ++j) {
-      fprintf(stderr, "Expanded token is %s\n", word_tokens[j]);
-    }*/
-    // 4. Parsing
+    /* 
+     * PARSING
+     */
     // Remove comments
-    // size_t comment_start;
-    for (size_t j = 0; j < num_tokens; ++j) {
+    for (size_t j = 0; j < num_tokens; j++) {
       if (strcmp(word_tokens[j], "#") == 0) {
         size_t token_count_diff = 0;
-        for (size_t n = j; n < num_tokens; ++n) {
+        for (size_t n = j; n < num_tokens; n++) {
           free(word_tokens[n]);
           word_tokens[n] = NULL;
-          ++token_count_diff;
+          token_count_diff++;
         }
         num_tokens -= token_count_diff;
         break;
       }
     }
     
-    //char *input_file = NULL;
-    //char *output_file = NULL;
     size_t input_ptr_offset = 0;
     size_t output_ptr_offset = 0;
     int is_bg_proc = false;
-    // Determines whether the command should be run in background and whether stdin/stdout will be redirected 
-    for (size_t j = num_tokens-1; j > 0; --j) {
-      if (num_tokens > 1 && strcmp(word_tokens[j], "&") == 0 && j == (num_tokens-1)) {
-        is_bg_proc = true;
-      } else if (num_tokens > 2 && strcmp(word_tokens[j], "<") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 3) || j == (num_tokens - 5))) {
-        input_ptr_offset = j;
-        // Do input redirection
-      } else if (num_tokens > 2 && strcmp(word_tokens[j], ">") == 0 && strcmp(word_tokens[num_tokens], "&") == 0 && (j == (num_tokens - 3) || j == (num_tokens - 5))) {
-        output_ptr_offset = j;
-      }
-    }
-    
-    // If & was passed as last word, remove it from the word_tokens array and adjust the number of tokens
-    if (is_bg_proc == true) {
+    // Determine whether command will run in background
+    if (strcmp(word_tokens[num_tokens-1], "&") == 0) {
+      free(word_tokens[num_tokens-1]);
       word_tokens[num_tokens-1] = NULL;
-      --num_tokens;
+      is_bg_proc = true;
+      num_tokens--;
+    }
+
+    // Determine whether stdin/stdout will be redirected 
+    for (size_t j = num_tokens-1; j > 0; --j) {
+      if (num_tokens > 2 && strcmp(word_tokens[j], "<") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
+        if (word_tokens[j+1] != NULL) {  
+          input_ptr_offset = j;
+        }
+      } else if (num_tokens > 2 && strcmp(word_tokens[j], ">") == 0 && (j == (num_tokens - 2) || j == (num_tokens - 4))) {
+        if (word_tokens[j+1] != NULL) {
+          output_ptr_offset = j;
+        }
+      }
     }
     
     char *input_file = NULL;
     char *output_file = NULL;
     // If input/output will be redirected, save that info and remove it from the word_tokens array along with the redirect operator
     if (input_ptr_offset != 0) {
-      input_file = word_tokens[input_ptr_offset+1];
+      input_file = strdup(word_tokens[input_ptr_offset+1]);
+      free(word_tokens[input_ptr_offset+1]);
       word_tokens[input_ptr_offset+1] = NULL;
+      free(word_tokens[input_ptr_offset]);
       word_tokens[input_ptr_offset] = NULL;
       num_tokens -= 2;
     }
 
     if (output_ptr_offset != 0) {
-      output_file = word_tokens[output_ptr_offset+1];
+      output_file = strdup(word_tokens[output_ptr_offset+1]);
+      free(word_tokens[output_ptr_offset+1]);
       word_tokens[output_ptr_offset+1] = NULL;
+      free(word_tokens[output_ptr_offset]);
       word_tokens[output_ptr_offset] = NULL;
       num_tokens -= 2;
     }
-
-    // 5. Execution
+    
+    /*
+     * EXECUTION
+     */
     // Insert NULL pointer at end here
-    word_tokens = realloc(word_tokens, sizeof (char**[num_tokens+1]));
-    word_tokens[num_tokens+1] = NULL;
-    // Branch for no command word entered in stdin
+    word_tokens = realloc(word_tokens, sizeof (char **[num_tokens+1]));
+    word_tokens[num_tokens] = NULL;
 
     // Branch for built-in command exit
     // First word/token is command
     if (strcmp(word_tokens[0], "exit") == 0) {
       if (num_tokens > 2) {
-        errno = -1;
-        fprintf(stderr, "Too many arguments passed to exit command\n");
-        goto exit;
+        if (fprintf(stderr, "Too many arguments passed to exit command\n") < 0) goto exit;
+        cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+        last_fg_exit_status = 1; /* exit code 1 is for general errors */
+        num_tokens = 0;
+        n = 0;
+        continue; /* Return to input step */
       }
       
-      // MISSING: SEND ALL CHILD PROCESSES SIGINT BEFORE EXITING
       int shell_exit_status = last_fg_exit_status;
       if (num_tokens == 2) {
-        /*size_t arg_len = strlen(word_tokens[1]);
-        for (size_t c = 0; c < arg_len; ++c) {
+        char *exit_status_str = NULL;
+        int status_is_digit = true;
+        size_t arg_len = strlen(word_tokens[1]);
+        exit_status_str = malloc(sizeof (size_t) * arg_len);
+        if (!exit_status_str) goto exit; /* error check malloc */
+        for (size_t c = 0; c < arg_len; c++) {
           if (isdigit(word_tokens[1][c]) != 0) {
-            fprintf(stderr, "Invalid arg to exit");
-            goto exit;
+            exit_status_str[c] = word_tokens[1][c];
+          } else {
+            status_is_digit = false;
+            break;
           }
-        }*/
-        shell_exit_status = atoi(word_tokens[1]);
+        }
+        if (!status_is_digit) {
+            if (fprintf(stderr, "Exit status arg (%s) contains non-digits\n", word_tokens[1]) < 0) goto exit;
+            cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+            last_fg_exit_status = 128; /* exit code 128 for invalid argument to exit */
+            num_tokens = 0;
+            n = 0;
+            continue;
+        }
+
+        shell_exit_status = atoi(exit_status_str);
+        if (shell_exit_status < 0) {
+          errno = -1;
+          fprintf(stderr, "An error occurred in function atoi\n"); /* fprintf not error checked since program goes to exit regardless */
+          goto exit;
+        }
+        if (handle_child_procs_exit() != 0) {
+          fprintf(stderr, "An error occurred while signaling child processes\n");
+          goto exit;
+        }
         last_fg_exit_status = shell_exit_status;
-        fprintf(stderr, "\nexit\n");
-        // fprintf(stderr, "Exit status is %d\n", shell_exit_status);
+        free(exit_status_str);
+        cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+        if (fprintf(stderr, "\nexit\n") < 0) goto exit;
         exit(shell_exit_status);
       } else if (num_tokens == 1) {
-        fprintf(stderr, "\nexit\n");
-        // fprintf(stderr, "Exit status is %d\n", shell_exit_status);
+        if (handle_child_procs_exit() != 0) {
+          fprintf(stderr, "An error occurred while signaling child processes\n");
+          goto exit;
+        }
+        cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+        if (fprintf(stderr, "\nexit\n") < 0) goto exit;
         exit(shell_exit_status);
-      } else {
-        // MISSING: ERROR IF ARG TO EXIT IS NOT AN INT
-        fprintf(stderr, "\nexit\n");
-        // shell_exit_status = atoi(word_tokens[1]);
-        exit(shell_exit_status);
-      }
+      } 
     } else if (strcmp(word_tokens[0], "cd") == 0) {  /* Branch for built-in command cd */
       if (num_tokens > 2) {
-        errno = -1;
-        fprintf(stderr, "Too many arguments passed to cd command\n");
-        goto exit;
-        // continue;
-        //goto reset;
+        if (fprintf(stderr, "Too many arguments passed to cd command\n") < 0) goto exit;
+        cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+        last_fg_exit_status = 1;
+        num_tokens = 0;
+        n = 0;
+        continue;
       }
 
-      char *cd_arg = getenv("HOME");
+      char *cd_arg = NULL;
+      char *temp_cd_arg = getenv("HOME");
       if (num_tokens == 2) {
         cd_arg = word_tokens[1];
+      } else {
+        cd_arg = temp_cd_arg;
       }
+      
       if (chdir(cd_arg) != 0) {
-        fprintf(stderr, "Unable to change directory\n");
-        // continue;
-        //goto reset;
-        goto exit;
+        if (fprintf(stderr, "An error occurred while trying to change directory\n") < 0) goto exit;
+        cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+        last_fg_exit_status = 1;
+        num_tokens = 0;
+        n = 0;
+        continue;
       }
 
     } else { /* Branch for non-built-in commands */
@@ -411,56 +483,60 @@ int main(void) {
 
       switch(new_child_pid) {
         case -1:
-          fprintf(stderr, "An error occurred in fork()\n");
-          goto exit; /* Error checks fork */
+          if (fprintf(stderr, "An error occurred when calling fork()\n") < 0) goto exit;
+          cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+          last_fg_exit_status = 1;
+          num_tokens = 0;
+          n = 0;
+          continue;
           break;
         case 0: /* Process is child */
-          // MISSING: Handling output redirection operator and input redirection opperator
+          // Reset signals to original dispositions
+          if (sigaction(SIGINT, &SIGINT_init_disp_sa, NULL) != 0) goto exit;
+          if (sigaction(SIGTSTP, &SIGTSTP_init_disp_sa, NULL) != 0) goto exit;
           /* Redirection handling adapted from Linux Programming Interface section 27.4 example code */
           if (input_file) {
-            // fprintf(stderr, "Redirect input\n");
-            //char *input_mode = "r";
-            //if (!freopen(input_file, input_mode, stdin)) {
-              //fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file); /* No error check since the next line will exit with error anyway */
-              //goto exit;
-            //}
             int in_fd;
             in_fd = open(input_file, O_RDONLY);
             if (in_fd == -1) {
-             fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
-              break;
+             if (fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file) < 0) goto exit;
+             cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+             num_tokens = 0;
+             n = 0;
+             last_fg_exit_status = 1;
+             continue;
             }
 
             if (in_fd != STDIN_FILENO) {
               if (dup2(in_fd, STDIN_FILENO) == -1) {
-               fprintf(stderr, "An error occurred while trying to redirect stdin to %s\n", input_file);
+               fprintf(stderr, "An error occurred in dup2() while trying to redirect stdin to %s\n", input_file);
                goto exit;
-               break;
               }
               if (in_fd != 0) {
-                close(in_fd);
+                if (close(in_fd) != 0) goto exit;
               }
             }
           }
 
           if (output_file) {
-           // fprintf(stderr, "Redirect output\n");
             int out_fd;
-            out_fd = open(output_file, O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
+            out_fd = open(output_file, O_CREAT | O_WRONLY, S_IRWXU | S_IRWXG | S_IRWXO);
             if (out_fd == -1) {
-              fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file);
-              goto exit;
-              break;
+              if (fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file) < 0) goto exit;
+              cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+              num_tokens = 0;
+              n = 0;
+              last_fg_exit_status = 1;
+              continue;
             }
 
             if (out_fd != STDOUT_FILENO) {
               if (dup2(out_fd, STDOUT_FILENO) == -1) {
-                fprintf(stderr, "An error occurred while trying to redirect stdout to %s\n", output_file);
+                fprintf(stderr, "An error occurred in dup2() while trying to redirect stdout to %s\n", output_file);
                 goto exit;
-                break;
               }
               if (out_fd != 1) {
-                close(out_fd);
+                if (close(out_fd) != 0) goto exit;
               }
             }
           }
@@ -468,104 +544,70 @@ int main(void) {
           // Execute new command
           if (execvp(word_tokens[0], word_tokens) == -1) {
             if (fprintf(stderr, "An error occurred while trying to run command %s\n", word_tokens[0]) < 0) goto exit;
-            goto exit;
-            break;
+            cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+            num_tokens = 0;
+            n = 0;
+            last_fg_exit_status = 1;
+            continue;
           }
-          fflush(stdin);
-          fflush(stdout);
-          fflush(stderr);
+
+          if (errno != 0) {
+            if (fprintf(stderr, "An error occurred in the child process: error number %d\n", errno) < 0) goto exit;
+            cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+            num_tokens = 0;
+            n = 0;
+            last_fg_exit_status = 1;
+            errno = 0;
+            continue;
+          }
+          if (fflush(stdin) != 0) goto exit;
+          if (fflush(stdout) != 0) goto exit;
+          if (fflush(stderr) != 0) goto exit;
           break;
         default: /* Process is parent */
           // Perform blocking wait if process is not run in background
-          fflush(stdin);
-          fflush(stdout);
-          fflush(stderr);
+          if (fflush(stdin) != 0) goto exit;
+          if (fflush(stdout) != 0) goto exit;
+          if (fflush(stderr) != 0) goto exit;
           if (!is_bg_proc) {
-            // fprintf(stderr, "Running child process in foreground\n");
-            if (waitpid(new_child_pid, &new_child_status, 0) == -1) goto exit; /* Blocking wait for child process with error checking */
-            // Set shell variable $?      
-            if (WIFSIGNALED(last_fg_exit_status)) {
+            pid_t waitpid_return_val = waitpid(new_child_pid, &new_child_status, 0);
+            if (waitpid_return_val == -1) goto exit;
+
+            if (WIFSIGNALED(new_child_status)) {
               last_fg_exit_status = 128 + WTERMSIG(new_child_status);
             } else if (WIFSTOPPED(new_child_status)) {
               if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) new_child_pid) < 0) goto exit;
               if (kill(new_child_pid, SIGCONT) == -1) {
                 fprintf(stderr, "Unable to send SICONT to child %jd\n", (intmax_t) new_child_pid);
-                break;
-                //goto exit;
+                goto exit;
               }
               last_bg_proc_pid = new_child_pid;
-            } else {
-              last_fg_exit_status = new_child_status;
+            } else if (WIFEXITED(new_child_status)) {
+              last_fg_exit_status = WEXITSTATUS(new_child_status);
             }
-            // fprintf(stderr, "For foreground child %jd exit status is %d\n", (intmax_t) new_child_pid, last_fg_exit_status);
           } else { /* Do not wait for background process */
-            //fprintf(stderr, "Not waiting for process\n");
             last_bg_proc_pid = new_child_pid;
           }
-
-          //if (WIFSIGNALED(new_child_status)) {
-          //  last_fg_exit_status = 128 + WTERMSIG(new_child_status);
-          //} else if (WIFSTOPPED(new_child_status)) {
-          //  if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) new_child_pid) < 0) goto exit;
-          //  kill(new_child_pid, SIGCONT);
-          //  last_bg_proc_pid = new_child_pid;
-          //} else if (WIFEXITED(new_child_status)) {
-          //  last_fg_exit_status = new_child_status; /* Set shell variable $? to exit status of this command */
-          //}
           break;
       }
+    }
 
-    }
-    while ((child_proc_pid = waitpid(group_pid, &child_proc_status, WUNTRACED | WNOHANG | WCONTINUED)) > 0) {
-      // Use of macros comes from CS344 modules and Linux Programming Interface text
-      if (WIFEXITED(child_proc_status)) {
-        if (fprintf(stderr, "Child process %jd done. Exit status %d.\n", (intmax_t) child_proc_pid, WEXITSTATUS(child_proc_status)) < 0) goto exit;
-      } else if (WIFSIGNALED(child_proc_status)) {
-        if (fprintf(stderr, "Child process %jd done. Signaled %d.\n", (intmax_t) child_proc_pid, WTERMSIG(child_proc_status)) < 0) goto exit;
-      } else if (WIFSTOPPED(child_proc_status)) {
-        if (kill(child_proc_pid, SIGCONT) == -1) err(errno, "Unable to send signal");
-        if (fprintf(stderr, "Child process %jd stopped. Continuing.\n", (intmax_t) child_proc_pid) < 0) goto exit;
-      }
-    }
-   // goto exit;
-   // Free things!
-   // fprintf(stderr, "Memset line\n");
-   //free(line);
-// reset:
-   memset(line, 0, line_length);
-   /*for (size_t x = 0; x < num_tokens; ++x) {
-     free(word_tokens[x]);
-   }
-   free(word_tokens);*/
-   // fprintf(stderr, "Memset word_tokens\n");
-   memset(word_tokens, 0, num_tokens+1);
-   // fprintf(stderr, "Reset num_tokens to 0\n");
-   num_tokens = 0;
+    // Free word_tokens and line at end of each loop iteration to avoid memory leaks
+    cleanup_memory(num_tokens, word_tokens, line, input_file, output_file);
+    // Reset num_tokens and n for next loop iteration
+    num_tokens = 0;
+    n = 0;
   }
 
-/* TODO: Parse command line input into semantic tokens */
-/* TODO: Implement parameter expansion for shell special parameters $$, $?, and $! and tilde expansion */
-/* TODO: Implement two shell built-in commands: exit and cd */
-/* TODO: Execute non-built-in commands using the appropriate exec(3) function 
- *    implement redirection operators < and >
- *    implement & operator to run commands in background */
-/* TODO: Implement custom behavior for SIGINT and SIGTSTP signals */
-
-  // Exit label for successful exiting of main function/program
-  // Based on CS344 tree assignment skeleton code
 exit:
-  // Free line pointer used for input
-  if (errno == 0) {
-    // fprintf(stderr, "Freeing line and word_tokens if they ae not null\n");
-    if (line != NULL) free(line);
-    if (num_tokens > 0 && word_tokens != NULL) {
-      for (size_t x = 0; x < num_tokens; ++x) {
-        free(word_tokens[x]);
-      }
-      free(word_tokens);
-    }
+  // Free word_tokens and line if needed
+  if (num_tokens > 0 && word_tokens != NULL) {
+    free_word_tokens(word_tokens, num_tokens);
   }
+  if (n > 0 && line != NULL) {
+    free(line);
+  }
+  // Returning errno or 0 depending on if errno is set copied from CS344's tree assignment skeleton code
   return errno ? -1 : 0;
 }
-
 
